@@ -1,14 +1,3 @@
-/* 
-
-   Minimal TCP client example. The client connects to port 8080 on the 
-   local machine and prints up to 255 received characters to the console, 
-   then exits. To test it, try running a minimal server like this on your
-   local machine:
-
-   echo "Here is a message" | nc -l -6 8080
-
-*/
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <fcntl.h>
@@ -19,39 +8,122 @@
 #include <string.h>
 #include <ctype.h>
 
+//Buffer lenghts
+#define MAXPROTOCOL 10
+#define MAXHOST 25
+#define MAXPATH 100
+#define MAXFILE 100
+#define MAXREQUEST 255
+#define MAXRESPONSE 1000000
+#define MAXSTATUSLINE 50
+
+int uri_delimiter(char c){
+	if(c == '/' || c==':' || c=='\0' || isspace((int)c))
+		return 1;
+	return 0;
+}
+
+//Copies a string using pointers, appends null at the end
+void copy_str_ptr(const char *from, char *to, const char *end, int limit){
+	int c = 0;
+	while(from != end && c < limit-1){
+		*to = *from;
+		to++; from++; c++;
+	}
+
+ 	*to = '\0';
+}
+
+
+void uri_parser_buffer(char *uri, char *protocol, int l1, char *host, int l2, char *path, int l3, char *file, int l4){
+	char *p1, *p2, *p3, *t_p3, *p4;
+
+	p1 = strstr(uri, "://");
+
+	if(p1 == NULL) {
+		snprintf(protocol,l1,"http");
+		p1 = uri;
+	}
+	else {
+		copy_str_ptr(uri,protocol,p1,l1);
+		p1+=3;
+	}
+
+	p2 = strchr(p1, '/');
+
+	if(p2 == NULL){
+		snprintf(host,l2,"%s",p1);
+		snprintf(path,l3,"/");
+		snprintf(file,l4,"index.html");
+		return;
+	}
+	else{
+		copy_str_ptr(p1,host,p2,l2);
+	}
+
+	t_p3 = p2;
+
+	do{
+		p3 = t_p3;
+		t_p3 = strchr(t_p3+1,'/');
+	} while(t_p3 != NULL);
+
+	p3++;
+	
+	copy_str_ptr(p2,path,p3,l3);
+
+	p4 = strchr(p3,'\0');
+	
+	if(p3 == p4)
+		snprintf(file,l4,"index.html");
+	else
+		copy_str_ptr(p3,file,p4,l4);
+}
+
 int main(int argc, char** argv) 
 {	
-  /* inpsired heavily by man 3 getaddrinfo 
-  */
   
   if(argc < 2){
 	fprintf(stderr, "Usage: %s <URL>\n", argv[0]);
 	exit(0);
   }
 
-  struct addrinfo hints;
-  struct addrinfo *result, *rp;
-  int sock_fd, s;
-
-  memset(&hints,0,sizeof(struct addrinfo));
-  hints.ai_family = AF_INET6;
-  hints.ai_socktype = SOCK_STREAM;
-
+  char protocol[MAXPROTOCOL];
+  char host[MAXHOST];
+  char path[MAXPATH];
+  char file[MAXFILE];
+  
+  uri_parser_buffer(argv[1],protocol,MAXPROTOCOL,host,MAXHOST,path,MAXPATH,file,MAXFILE);
+/*
   //Parse the URI
-  //Get host
-  char *host = strstr(argv[1], "://");
+  //Get protocol
+  char *defprotocol = "http";
+  char *protocol = argv[1];
 
-  if(host == NULL) host = argv[1];
-  else host+=3;
+  //Get host
+  char host[MAXHOST];
+  char *t_host = strstr(argv[1], "://");
+
+  if(t_host == NULL){
+	t_host = argv[1];
+	protocol = defprotocol;
+  }
+  else t_host+=3;
+
+  //Host string in a separate buffer
+  int c; char *p;
+  for(c=0, p=t_host; c < MAXHOST-1 && !uri_delimiter(*p); c++, p++){
+	host[c] = *p;
+  }
+  host[c] = '\0';
 
   //Get path
-  char *path = strchr(host, '/');
   char *defpath = "/index.html";
+  char *path = strchr(t_host, '/');
 
   if(path == NULL || *(path+1) == '\0' || isspace((int)*(path+1))) path = defpath;
 
-
-  //Get file
+  //Get file from path
   char *remote_file = path+1;
 
   char *next;
@@ -60,12 +132,23 @@ int main(int argc, char** argv)
 	next = remote_file;
   }
 
+  //No file sepecified in path, default file is index.html
   if(*remote_file == '\0' || isspace((int)*remote_file)) remote_file = defpath+1;
+*/
+
 
  //Setup Connection
-  s = getaddrinfo(host,"80",&hints,&result);
+  struct addrinfo hints;
+  struct addrinfo *result, *rp;
+  int sock_fd, s;
+
+  memset(&hints,0,sizeof(struct addrinfo));
+  hints.ai_family = AF_INET6;
+  hints.ai_socktype = SOCK_STREAM;
+
+  s = getaddrinfo(host,protocol,&hints,&result);
   if (0 != s){
-    perror("error populating address structure");
+    perror("Error populating address structure");
     exit(1);
   }
   for (rp = result; rp != NULL; rp = rp->ai_next) {
@@ -87,63 +170,70 @@ int main(int argc, char** argv)
   freeaddrinfo(result);
 
   //Request
-  char msg[255];
-  memset(&msg,0,sizeof(msg));
+  char request[MAXREQUEST];
+  memset(&request,0,MAXREQUEST);
 
-  sprintf(msg, "GET %s HTTP/1.0\r\n\r\n", path);
+  snprintf(request, MAXREQUEST, "GET %s HTTP/1.0\r\n\r\n", strcat(path,file));
 
-  int msg_len = strlen(msg);
-  if(send(sock_fd, msg, msg_len, 0) != msg_len) { perror("Send failed"); exit(1); }
-
+  int request_len = strlen(request);
+  if(send(sock_fd, request, request_len, 0) != request_len) { perror("Send failed"); exit(1); }
 
  //Respone
-  char data[1000000];
-  memset(&data,0,sizeof(data));
+  char data[MAXRESPONSE];
+  memset(&data,0,MAXRESPONSE);
 
-  int curr_recv = recv(sock_fd, data, sizeof(data), 0);
-
-  if(curr_recv==0) { fprintf(stderr, "Did not receive any data from host\n"); exit(1); }
+  int tmp_recv = recv(sock_fd, data, MAXRESPONSE, 0);
+  if(tmp_recv==0) { fprintf(stderr, "Error: Didn't receive any data from host\n"); exit(1); }
 
   //Requires multiple recv calls to get entire file.
-  int recv_count = 0;
-  while(curr_recv > 0){
-	recv_count += curr_recv;
-	curr_recv = recv(sock_fd, data+recv_count, sizeof(data)-recv_count,0);
+  int total_recv = 0;
+  int tmp_maxresponse = MAXRESPONSE;
+  while(tmp_recv > 0){
+	total_recv += tmp_recv;
+        tmp_maxresponse = MAXRESPONSE-total_recv;
+	tmp_recv = recv(sock_fd, data+total_recv, tmp_maxresponse<0 ? 0:tmp_maxresponse,0);
   }
 
-  if(curr_recv<0) { perror("Receive failed");	exit(1); }
-
+  if(tmp_recv<0) { perror("Receive failed"); exit(1); }
 
  //Parse received response
  //What if "200 OK" in body of message? False OK. Parse correctly.
-  char *recv_status = strstr(data,"200 OK");
- 
-  if(recv_status == NULL) {
-	fprintf(stderr, "Could not obtain webpage, exiting...\n");
+  char status_line[MAXSTATUSLINE];
+  char *resp_body = strstr(data,"\r\n\r\n");
+
+  if(resp_body == NULL) { 
+	fprintf(stderr, "Error: Data doesn't appear to follow HTTP protocol"); 
 	exit(1);
   }
+  resp_body += 4;
 
-  char *entity_body = strstr(data,"\r\n\r\n") + 4;
+  copy_str_ptr(data, status_line, strstr(data,"\r\n"), MAXSTATUSLINE);
 
+  if(!strstr(status_line,"200 OK")){
+	fprintf(stderr,"%s\n",status_line);
+	
+	shutdown(sock_fd,SHUT_RDWR);
+	return 0;
+  }
   //Count number of bytes in header
   int head_bytes = 0;
 
   char *tmp = data;
-  while(tmp != entity_body){
+  while(tmp != resp_body){
 	head_bytes++;
         tmp++;
   }
 
-  int data_bytes = recv_count - head_bytes;
+  int body_bytes = total_recv - head_bytes;
 
   //Create file on fs, write received bytes to that file
-  int saved_fd = open(remote_file, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  int saved_fd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if(saved_fd<0) {perror("Open failed"); exit(1);}
 
-  if(write(saved_fd,entity_body,data_bytes) != data_bytes) {perror("Write failed"); exit(1);}
+  if(write(saved_fd,resp_body,body_bytes) != body_bytes) {perror("Write failed"); exit(1);}
 
   close(saved_fd);
-
   shutdown(sock_fd,SHUT_RDWR);
   return 0;
 }
+
