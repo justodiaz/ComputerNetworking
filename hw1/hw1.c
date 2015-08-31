@@ -17,12 +17,6 @@
 #define MAXRESPONSE 1000000
 #define MAXSTATUSLINE 50
 
-int uri_delimiter(char c){
-	if(c == '/' || c==':' || c=='\0' || isspace((int)c))
-		return 1;
-	return 0;
-}
-
 //Copies a string using pointers, appends null at the end
 void copy_str_ptr(const char *from, char *to, const char *end, int limit){
 	int c = 0;
@@ -33,7 +27,6 @@ void copy_str_ptr(const char *from, char *to, const char *end, int limit){
 
  	*to = '\0';
 }
-
 
 void uri_parser_buffer(char *uri, char *protocol, int l1, char *host, int l2, char *path, int l3, char *file, int l4){
 	char *p1, *p2, *p3, *t_p3, *p4;
@@ -94,48 +87,6 @@ int main(int argc, char** argv)
   char file[MAXFILE];
   
   uri_parser_buffer(argv[1],protocol,MAXPROTOCOL,host,MAXHOST,path,MAXPATH,file,MAXFILE);
-/*
-  //Parse the URI
-  //Get protocol
-  char *defprotocol = "http";
-  char *protocol = argv[1];
-
-  //Get host
-  char host[MAXHOST];
-  char *t_host = strstr(argv[1], "://");
-
-  if(t_host == NULL){
-	t_host = argv[1];
-	protocol = defprotocol;
-  }
-  else t_host+=3;
-
-  //Host string in a separate buffer
-  int c; char *p;
-  for(c=0, p=t_host; c < MAXHOST-1 && !uri_delimiter(*p); c++, p++){
-	host[c] = *p;
-  }
-  host[c] = '\0';
-
-  //Get path
-  char *defpath = "/index.html";
-  char *path = strchr(t_host, '/');
-
-  if(path == NULL || *(path+1) == '\0' || isspace((int)*(path+1))) path = defpath;
-
-  //Get file from path
-  char *remote_file = path+1;
-
-  char *next;
-  while((next = strchr(remote_file,'/')) != NULL){
-	remote_file = next+1;
-	next = remote_file;
-  }
-
-  //No file sepecified in path, default file is index.html
-  if(*remote_file == '\0' || isspace((int)*remote_file)) remote_file = defpath+1;
-*/
-
 
  //Setup Connection
   struct addrinfo hints;
@@ -173,42 +124,43 @@ int main(int argc, char** argv)
   char request[MAXREQUEST];
   memset(&request,0,MAXREQUEST);
 
-  snprintf(request, MAXREQUEST, "GET %s HTTP/1.0\r\n\r\n", strcat(path,file));
+  snprintf(request, MAXREQUEST, "GET %s%s HTTP/1.0\r\n\r\n", path, file);
 
   int request_len = strlen(request);
   if(send(sock_fd, request, request_len, 0) != request_len) { perror("Send failed"); exit(1); }
 
  //Respone
-  char data[MAXRESPONSE];
-  memset(&data,0,MAXRESPONSE);
+  char response[MAXRESPONSE];
+  memset(&response,0,MAXRESPONSE);
 
-  int tmp_recv = recv(sock_fd, data, MAXRESPONSE, 0);
-  if(tmp_recv==0) { fprintf(stderr, "Error: Didn't receive any data from host\n"); exit(1); }
+  int tmp_recv = recv(sock_fd, response, MAXRESPONSE, 0);
+  if(tmp_recv==0) { fprintf(stderr, "Error: Didn't receive a response from host\n"); exit(1); }
 
   //Requires multiple recv calls to get entire file.
   int total_recv = 0;
   int tmp_maxresponse = MAXRESPONSE;
+
   while(tmp_recv > 0){
 	total_recv += tmp_recv;
         tmp_maxresponse = MAXRESPONSE-total_recv;
-	tmp_recv = recv(sock_fd, data+total_recv, tmp_maxresponse<0 ? 0:tmp_maxresponse,0);
+	tmp_recv = recv(sock_fd, response+total_recv, tmp_maxresponse<0 ? 0:tmp_maxresponse,0);
   }
 
   if(tmp_recv<0) { perror("Receive failed"); exit(1); }
 
  //Parse received response
- //What if "200 OK" in body of message? False OK. Parse correctly.
   char status_line[MAXSTATUSLINE];
-  char *resp_body = strstr(data,"\r\n\r\n");
+  char *resp_body = strstr(response,"\r\n\r\n");
 
   if(resp_body == NULL) { 
-	fprintf(stderr, "Error: Data doesn't appear to follow HTTP protocol"); 
+	fprintf(stderr, "Error:Received response doesn't appear to follow HTTP protocol"); 
 	exit(1);
   }
   resp_body += 4;
 
-  copy_str_ptr(data, status_line, strstr(data,"\r\n"), MAXSTATUSLINE);
+  copy_str_ptr(response, status_line, strstr(response,"\r\n"), MAXSTATUSLINE);
 
+  //Didn't get 200 OK status, dont' save anything just quit
   if(!strstr(status_line,"200 OK")){
 	fprintf(stderr,"%s\n",status_line);
 	
@@ -218,7 +170,7 @@ int main(int argc, char** argv)
   //Count number of bytes in header
   int head_bytes = 0;
 
-  char *tmp = data;
+  char *tmp = response;
   while(tmp != resp_body){
 	head_bytes++;
         tmp++;
