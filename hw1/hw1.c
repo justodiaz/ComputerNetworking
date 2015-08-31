@@ -1,3 +1,5 @@
+//Justo Diaz Esquivel
+//CS 450 Fall 2015 -- UIC
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <fcntl.h>
@@ -10,7 +12,7 @@
 
 //Buffer lenghts
 #define MAXPROTOCOL 10
-#define MAXHOST 25
+#define MAXHOST 100
 #define MAXPATH 100
 #define MAXFILE 100
 #define MAXREQUEST 255
@@ -94,12 +96,12 @@ int main(int argc, char** argv)
   int sock_fd, s;
 
   memset(&hints,0,sizeof(struct addrinfo));
-  hints.ai_family = AF_INET6;
+  //hints.ai_family = AF_INET6;
   hints.ai_socktype = SOCK_STREAM;
 
   s = getaddrinfo(host,protocol,&hints,&result);
   if (0 != s){
-    perror("Error populating address structure");
+    fprintf(stderr,"Error populating address structure: %s\n", gai_strerror(s));
     exit(1);
   }
   for (rp = result; rp != NULL; rp = rp->ai_next) {
@@ -124,7 +126,10 @@ int main(int argc, char** argv)
   char request[MAXREQUEST];
   memset(&request,0,MAXREQUEST);
 
-  snprintf(request, MAXREQUEST, "GET %s%s HTTP/1.0\r\n\r\n", path, file);
+  snprintf(request, MAXREQUEST, "GET %s%s HTTP/1.0\r\n", path, file);
+  sprintf(request,"%sHost: %s\r\n\r\n",request,host);
+
+  printf("Sending Request...\n%s",request); 
 
   int request_len = strlen(request);
   if(send(sock_fd, request, request_len, 0) != request_len) { perror("Send failed"); exit(1); }
