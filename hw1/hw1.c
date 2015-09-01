@@ -1,7 +1,7 @@
 //Justo Diaz Esquivel
 //CS 450 Fall 2015 -- UIC
-#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -17,7 +17,7 @@
 #define MAXFILE 100
 #define MAXREQUEST 255
 #define MAXRESPONSE 1000000
-#define MAXSTATUSLINE 50
+#define MAXSTATLINE 100
 
 //Copies a string using pointers, appends null at the end
 void copy_str_ptr(const char *from, char *to, const char *end, int limit){
@@ -30,6 +30,7 @@ void copy_str_ptr(const char *from, char *to, const char *end, int limit){
  	*to = '\0';
 }
 
+//Custom UIR parser
 void uri_parser_buffer(char *uri, char *protocol, int l1, char *host, int l2, char *path, int l3, char *file, int l4){
 	char *p1, *p2, *p3, *t_p3, *p4;
 
@@ -52,9 +53,7 @@ void uri_parser_buffer(char *uri, char *protocol, int l1, char *host, int l2, ch
 		snprintf(file,l4,"index.html");
 		return;
 	}
-	else{
-		copy_str_ptr(p1,host,p2,l2);
-	}
+	else copy_str_ptr(p1,host,p2,l2);
 
 	t_p3 = p2;
 
@@ -79,7 +78,7 @@ int main(int argc, char** argv)
 {	
   
   if(argc < 2){
-	fprintf(stderr, "Usage: %s <URL>\n", argv[0]);
+	fprintf(stderr, "Usage: %s <URI>\n", argv[0]);
 	exit(0);
   }
 
@@ -96,8 +95,9 @@ int main(int argc, char** argv)
   int sock_fd, s;
 
   memset(&hints,0,sizeof(struct addrinfo));
-  //hints.ai_family = AF_INET6;
-  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_family = AF_UNSPEC; //AF_INET6 does not work?
+  hints.ai_socktype = SOCK_STREAM;//SOCK_STREAM, SOCK_DGRAM
+  hints.ai_protocol = 0; //"any"
 
   s = getaddrinfo(host,protocol,&hints,&result);
   if (0 != s){
@@ -154,7 +154,7 @@ int main(int argc, char** argv)
   if(tmp_recv<0) { perror("Receive failed"); exit(1); }
 
  //Parse received response
-  char status_line[MAXSTATUSLINE];
+  char status_line[MAXSTATLINE];
   char *resp_body = strstr(response,"\r\n\r\n");
 
   if(resp_body == NULL) { 
@@ -163,12 +163,13 @@ int main(int argc, char** argv)
   }
   resp_body += 4;
 
-  copy_str_ptr(response, status_line, strstr(response,"\r\n"), MAXSTATUSLINE);
+  copy_str_ptr(response, status_line, strstr(response,"\r\n"), MAXSTATLINE);
+
+  printf("Receiving...\n%s\n", status_line);
 
   //Didn't get 200 OK status, dont' save anything just quit
   if(!strstr(status_line,"200 OK")){
-	fprintf(stderr,"%s\n",status_line);
-	
+	printf("No file saved.\n");
 	shutdown(sock_fd,SHUT_RDWR);
 	return 0;
   }
@@ -189,6 +190,7 @@ int main(int argc, char** argv)
 
   if(write(saved_fd,resp_body,body_bytes) != body_bytes) {perror("Write failed"); exit(1);}
 
+  printf("File \"%s\" saved.\n", file);
   close(saved_fd);
   shutdown(sock_fd,SHUT_RDWR);
   return 0;
