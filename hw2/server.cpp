@@ -44,6 +44,7 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 	while(partial > 0){
 		total += partial;
 		len -= partial;
+		if(len <= 0) break;
 		partial = recv(sockfd,(char *)buf + partial, len < 0 ? 0 : len, 0);
 	}
 
@@ -131,10 +132,11 @@ int main(int argc, char *argv[]){
 
 	Listen(sockfd, BACKLOG);
 	
-	std::cout << "Accepting connection..." << std::endl;	
+	std::cout << "Accepting 1st connection..." << std::endl;	
 	client1 = Accept(sockfd, (struct sockaddr *) &a_client1, &s_client1);
-	std::cout << "Accepted..." << std::endl;	
+	std::cout << "Accepted." << std::endl;	
 
+    std::cout << "Receiving message..." << std::endl;
 	Recv(client1,command, sizeof command,0);
 
     if(command[0] == WANTGAME && command[1] == 0)
@@ -142,8 +144,11 @@ int main(int argc, char *argv[]){
 	else
 		i_error("Client connected to did not follow protocol");
 		
+	std::cout << "Accepting 2nd connection..." << std::endl;	
 	client2 = Accept(sockfd, (struct sockaddr *) &a_client2, &s_client2);
+	std::cout << "Accepted." << std::endl;	
 
+    std::cout << "Receiving message..." << std::endl;
 	Recv(client2,command, sizeof command, 0);
 
     if(command[0] == WANTGAME && command[1] == 0)
@@ -151,7 +156,7 @@ int main(int argc, char *argv[]){
 	else
 		i_error("Client connected to did not follow protocol");
 	
-	std::cout <<"Dealing cards." << std::endl;
+	std::cout <<"Dealing cards..." << std::endl;
 
 	std::array<char, 52> deck;
 	for(int i=0;i<52;i++) deck.at(i) = i;
@@ -168,6 +173,27 @@ int main(int argc, char *argv[]){
 	Send(client2,cards,sizeof cards,0);
 
 	
+	std::cout <<"Playing..." << std::endl;
+	int p1, p2;
+	for(;;){
+		Recv(client1,command,sizeof command,0);
+		
+		if(command[0] != PLAYCARD) i_error("Client error");
+
+		p1 = (int)command[1];
+
+		Recv(client2,command,sizeof command,0);
+		
+		if(command[0] != PLAYCARD) i_error("Client error");
+
+		p2 = (int)command[1];
+
+		p1 %= 13;
+		p2 %= 13;
+
+		command[0] = 
+		if(p1 > p2) 
+
 	/*
 	std::cout << "Sending want game request..." << std::endl;
 	

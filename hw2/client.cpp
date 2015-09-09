@@ -40,6 +40,7 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 	while(partial > 0){
 		total += partial;
 		len -= partial;
+		if(len <= 0) break;
 		partial = recv(sockfd,(char *)buf + partial, len < 0 ? 0 : len, 0);
 	}
 
