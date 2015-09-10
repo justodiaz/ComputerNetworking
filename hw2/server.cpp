@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <array>
+#include <vector>
 #include <algorithm>
 #include <ctime>
 #include <cstdlib>
@@ -107,6 +108,15 @@ int accept_player(int sockfd, int player_num){
 	return newfd;
 }
 
+void validate_card(std::vector<char> &p, char card){
+	auto iter = std::find(p.begin(),p.end(),card);
+	if(iter == p.end())
+		i_error("Client error");
+	else
+		p.erase(iter);
+
+}
+
 int main(int argc, char *argv[]){
 	if (argc < 2){
 		std::cerr << "Usage: " << argv[0] << " <port>" << std::endl;
@@ -168,12 +178,23 @@ int main(int argc, char *argv[]){
 	cards[0] = GAMESTART;
 
 	int i=0;
-	for(int j=1;j<=26;j++,i++) cards[j] = deck[i];
+
+	std::vector<char> p1_cards;
+
+	for(int j=1;j<=26;j++,i++) {
+		cards[j] = deck[i];
+		p1_cards.push_back(deck[i]);
+	}
 	Send(client1,cards,sizeof cards,0);
 
-	for(int j=1;j<=26;j++,i++) cards[j] = deck[i];
+	std::vector<char> p2_cards;
+
+	for(int j=1;j<=26;j++,i++){
+		cards[j] = deck[i];
+		p2_cards.push_back(deck[i]);
+	}
 	Send(client2,cards,sizeof cards,0);
-	
+
 	std::cout <<"Playing..." << std::endl;
 
     char command[2] = {0};
@@ -185,11 +206,15 @@ int main(int argc, char *argv[]){
 
 		p1 = (int)command[1];
 
+		validate_card(p1_cards,(char)p1);		
+		
 		Recv(client2,command,sizeof command,0);
 		
 		if(command[0] != PLAYCARD) i_error("Client error");
 
 		p2 = (int)command[1];
+
+		validate_card(p2_cards,(char)p2);		
 
 		p1 %= 13;
 		p2 %= 13;
