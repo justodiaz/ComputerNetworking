@@ -51,7 +51,7 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 		total += partial;
 		len -= partial;
 		if(len <= 0) break;
-		partial = recv(sockfd,(char *)buf + partial, len < 0 ? 0 : len, 0);
+		partial = recv(sockfd,(char *)buf + partial, len, 0);
 	}
 
 	if(partial < 0) { perror("Receive failed"); exit(1); }
