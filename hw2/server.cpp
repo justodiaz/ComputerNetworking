@@ -175,7 +175,7 @@ int main(int argc, char *argv[]){
 	
 	std::cout <<"Playing..." << std::endl;
 	int p1, p2;
-	for(;;){
+	for(int i=0;i<26;i++){
 		Recv(client1,command,sizeof command,0);
 		
 		if(command[0] != PLAYCARD) i_error("Client error");
@@ -191,54 +191,23 @@ int main(int argc, char *argv[]){
 		p1 %= 13;
 		p2 %= 13;
 
-		command[0] = 
-		if(p1 > p2) 
+		command[0] = PLAYRESULT;
+		if(p1 > p2) command[1] = WIN;
+		else if(p1 < p2) command[1] = LOSE;
+		else command[1] = DRAW;
 
-	/*
-	std::cout << "Sending want game request..." << std::endl;
-	
-	command[0] = WANTGAME;
+		Send(client1,command, sizeof command,0);
 
-	Send(sockfd,command,sizeof(command),0);
+		if(command[1] == WIN) command[1] = LOSE;
+		else if(command[1] == LOSE) command[1] = WIN;
+		else command[1] = DRAW;
 
-	Recv(sockfd,cards,sizeof(cards),0);
-
-	if(cards[0] != GAMESTART) i_error("Server error, now exiting.");
-
-	int score = 0;
-	for(int i = 1; i<27; i++){
-
-		command[0] = PLAYCARD;
-		command[1] = cards[i];
- 
-		Send(sockfd,command,sizeof(command),0);
-
-		Recv(sockfd,command,sizeof(command),0);
-
-		if(command[0] != PLAYRESULT) i_error("Server error, now exiting.");
-
-		switch(command[1]){
-			case WIN:
-				score++;
-				std::cout << "Battle won!" << std::endl;
-				break;
-			case LOSE:
-				score--;
-				std::cout << "Battle lost!" << std::endl;
-				break;
-			case DRAW:
-				std::cout << "Battle draw!" << std::endl;
-				break;
-			default:
-				i_error("Server error, now exiting.");
-		}	
+		Send(client2,command,sizeof command,0);
 	}
 
-	shutdown(sockfd, SHUT_RDWR);		
-
-	if(score > 0) std::cout << "You won the war!" << std::endl;
-	else if (score < 0) std::cout << "You lost the war!" << std::endl;
-	else std::cout << "War ended in a draw!" << std::endl;
-*/
+	shutdown(client1, SHUT_RDWR);
+	shutdown(client2, SHUT_RDWR);
+	shutdown(sockfd, SHUT_RDWR);
+		
 	return 0;
 }
