@@ -21,12 +21,12 @@ ssize_t Send(int sockfd, const void*buf, size_t len, int flags){
 	int sent = send(sockfd,buf,len,flags);
 	if(sent < 0){
 		perror("Send error");
-		exit(0);
+		exit(1);
 	}
 
 	if(sent != (int)len){
 		std::cerr << "Send didn't send all bytes...exiting" << std::endl;
-		exit(0);
+		exit(1);
 	}
 
 	return sent;
@@ -44,20 +44,20 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 		partial = recv(sockfd,(char *)buf + partial, len < 0 ? 0 : len, 0);
 	}
 
-	if(partial < 0) { perror("Receive failed"); exit(0); }
+	if(partial < 0) { perror("Receive failed"); exit(1); }
 
 	return total;
 }
 
 void i_error(char const *msg){
 	std::cerr << msg << std::endl;
-	exit(0);
+	exit(1);
 }
 
 int main(int argc, char *argv[]){
 	if (argc < 3){
 		std::cerr << "Usage: " << argv[0] << " <host> <port>" << std::endl;
-		exit(0);
+		exit(1);
 	}
 
 	struct addrinfo hints = {0};
@@ -76,7 +76,7 @@ int main(int argc, char *argv[]){
 		else
 			std::cerr << "getaddrinfo error: " << gai_strerror(s) << std::endl;
 			
-		exit(0);
+		exit(1);
 	}
 
 	int sockfd;
@@ -102,16 +102,26 @@ int main(int argc, char *argv[]){
 
 	Send(sockfd,command,sizeof(command),0);
 
-	std::cout << "Waiting for cards." << std::endl;
+	std::cout << "Waiting for cards..." << std::endl;
 	Recv(sockfd,cards,sizeof(cards),0);
 
 	if(cards[0] != GAMESTART) i_error("Server error, now exiting.");
-
+	
+	std::cout << "Ready to play!" << std::endl;
 	int score = 0;
+	
+	char const *suite[] = {"Clubs","Diamonds","Hearts","Spades"};
+	char const *face[] = {"Two","Three","Four","Five","Six","Seven",
+				   "Eight","Nine","Ten","Jack","Queen","King","Ace"};
 	for(int i = 1; i<27; i++){
 
 		command[0] = PLAYCARD;
 		command[1] = cards[i];
+
+		int idx_suite = cards[i]/13;
+		int idx_face = cards[i]%13;
+		
+		std::cout << "Playing " << face[idx_face] << " of " << suite[idx_suite] << std::endl;
  
 		Send(sockfd,command,sizeof(command),0);
 

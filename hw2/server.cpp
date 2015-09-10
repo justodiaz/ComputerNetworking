@@ -1,3 +1,6 @@
+//Justo Diaz Esquivel
+//CS450 HW2
+//War Card game server
 #include <iostream>
 #include <cstdio>
 #include <cerrno>
@@ -8,6 +11,8 @@
 #include <netdb.h>
 #include <array>
 #include <algorithm>
+#include <ctime>
+#include <cstdlib>
 
 #define WANTGAME 0
 #define GAMESTART 1
@@ -25,12 +30,12 @@ ssize_t Send(int sockfd, const void*buf, size_t len, int flags){
 	int sent = send(sockfd,buf,len,flags);
 	if(sent < 0){
 		perror("Send error");
-		exit(0);
+		exit(1);
 	}
 
 	if(sent != (int)len){
 		std::cerr << "Send didn't send all bytes...exiting" << std::endl;
-		exit(0);
+		exit(1);
 	}
 
 	return sent;
@@ -48,7 +53,7 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 		partial = recv(sockfd,(char *)buf + partial, len < 0 ? 0 : len, 0);
 	}
 
-	if(partial < 0) { perror("Receive failed"); exit(0); }
+	if(partial < 0) { perror("Receive failed"); exit(1); }
 
 	return total;
 }
@@ -59,7 +64,7 @@ void Listen(int s, int backlog)
 
     if ((rc = listen(s,  backlog)) < 0){
 		perror("Listen error");
-		exit(0);
+		exit(1);
 	}
 }
 
@@ -69,7 +74,7 @@ int Accept(int s, struct sockaddr *addr, socklen_t *addrlen)
 
     if ((rc = accept(s, addr, addrlen)) < 0){
 		perror("Accept error");
-		exit(0);
+		exit(1);
 	}
 
     return rc;
@@ -78,13 +83,34 @@ int Accept(int s, struct sockaddr *addr, socklen_t *addrlen)
 
 void i_error(char const *msg){
 	std::cerr << msg << std::endl;
-	exit(0);
+	exit(1);
+}
+
+int accept_player(int sockfd, int player_num){	
+	int newfd;
+	struct sockaddr_storage a_client;
+	socklen_t s_client;
+	
+	char command[2] = {0};
+	std::cout << "Accepting connection #" << player_num <<"..." << std::endl;	
+	newfd = Accept(sockfd, (struct sockaddr *) &a_client, &s_client);
+	std::cout << "Accepted." << std::endl;	
+
+	std::cout << "Waiting for player confirmation..." << std::endl;
+	Recv(newfd,command, sizeof command,0);
+
+	if(command[0] == WANTGAME && command[1] == 0)
+		std::cout << "Player #"<<player_num<<" confirmed." << std::endl;
+	else
+		i_error("Player confirmation failed: Wrong protocol message.");
+
+	return newfd;
 }
 
 int main(int argc, char *argv[]){
 	if (argc < 2){
 		std::cerr << "Usage: " << argv[0] << " <port>" << std::endl;
-		exit(0);
+		exit(1);
 	}
 
 	struct addrinfo hints = {0};
@@ -103,7 +129,7 @@ int main(int argc, char *argv[]){
 		else
 			std::cerr << "getaddrinfo error: " << gai_strerror(s) << std::endl;
 			
-		exit(0);
+		exit(1);
 	}
 
 	int sockfd;
@@ -122,58 +148,35 @@ int main(int argc, char *argv[]){
 
 	std::cout << "Ready.." << std::endl;
 
-	struct sockaddr_storage a_client1, a_client2; //socket addresses
-	socklen_t s_client1 = sizeof a_client1;
-	socklen_t s_client2 = sizeof a_client2; //sizes
 	int client1, client2; //fds
 
-    char command[2] = {0};
-	char cards[27] = {0};
-
 	Listen(sockfd, BACKLOG);
-	
-	std::cout << "Accepting 1st connection..." << std::endl;	
-	client1 = Accept(sockfd, (struct sockaddr *) &a_client1, &s_client1);
-	std::cout << "Accepted." << std::endl;	
 
-    std::cout << "Receiving message..." << std::endl;
-	Recv(client1,command, sizeof command,0);
+	client1 = accept_player(sockfd, 1);
+	client2 = accept_player(sockfd, 2);
 
-    if(command[0] == WANTGAME && command[1] == 0)
-		std::cout << "Player 1 accepted." << std::endl;
-	else
-		i_error("Client connected to did not follow protocol");
-		
-	std::cout << "Accepting 2nd connection..." << std::endl;	
-	client2 = Accept(sockfd, (struct sockaddr *) &a_client2, &s_client2);
-	std::cout << "Accepted." << std::endl;	
-
-    std::cout << "Receiving message..." << std::endl;
-	Recv(client2,command, sizeof command, 0);
-
-    if(command[0] == WANTGAME && command[1] == 0)
-		std::cout << "Player 2 accepted." << std::endl;
-	else
-		i_error("Client connected to did not follow protocol");
-	
 	std::cout <<"Dealing cards..." << std::endl;
 
 	std::array<char, 52> deck;
-	for(int i=0;i<52;i++) deck.at(i) = i;
+	for(int i=0;i<52;i++) deck[i] = i;
+
+	std::srand( unsigned (std::time(0)) );
 
 	std::random_shuffle(deck.begin(), deck.end());
 
+	char cards[27] = {0};
 	cards[0] = GAMESTART;
 
 	int i=0;
-	for(int j=1;i<=27;j++,i++) cards[j] = deck.at(i);
+	for(int j=1;j<=26;j++,i++) cards[j] = deck[i];
 	Send(client1,cards,sizeof cards,0);
 
-	for(int j=1;i<=27;j++,i++) cards[j] = deck.at(i);
+	for(int j=1;j<=26;j++,i++) cards[j] = deck[i];
 	Send(client2,cards,sizeof cards,0);
-
 	
 	std::cout <<"Playing..." << std::endl;
+
+    char command[2] = {0};
 	int p1, p2;
 	for(int i=0;i<26;i++){
 		Recv(client1,command,sizeof command,0);
@@ -209,5 +212,6 @@ int main(int argc, char *argv[]){
 	shutdown(client2, SHUT_RDWR);
 	shutdown(sockfd, SHUT_RDWR);
 		
+	std::cout <<"Server exiting..." << std::endl;
 	return 0;
 }
