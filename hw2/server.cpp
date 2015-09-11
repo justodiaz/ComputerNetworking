@@ -126,7 +126,7 @@ int main(int argc, char *argv[]){
 	struct addrinfo hints = {0};
 	struct addrinfo *res, *rp;
 
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET6;
 	hints.ai_socktype = SOCK_STREAM;//SOCK_STREAM, SOCK_DGRAM
 	hints.ai_protocol = 0; //"any"
 
