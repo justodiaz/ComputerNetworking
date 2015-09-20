@@ -28,6 +28,8 @@
 #define SENDCARD 2
 #define INBATTLE 3
 
+#define DECKSIZE 52
+
 #define BACKLOG 100
 
 using namespace std;
@@ -93,10 +95,23 @@ int Accept(int s, struct sockaddr *addr, socklen_t *addrlen)
     return rc;
 }
 
+int Select(int  n, fd_set *readfds, fd_set *writefds,
+	   fd_set *exceptfds, struct timeval *timeout) 
+{
+    int rc;
+
+    if ((rc = select(n, readfds, writefds, exceptfds, timeout)) < 0){
+		perror("Select error");
+		exit(1);
+	}
+
+    return rc;
+}
+
 int accept_player(int listener){	
 	int newfd;
 	struct sockaddr_storage a_client;
-	socklen_t s_client;
+	socklen_t s_client = sizeof a_client;
 	
 	newfd = Accept(listener, (struct sockaddr *) &a_client, &s_client);
 	cout << "Client connected." << endl;	
@@ -198,7 +213,7 @@ class Game{
 				play_battle();
 
 				if(player.deck.empty() || other.deck.empty()) {
-					cout << "Game ended.";
+					cout << "Game ended." <<endl;
 					Shutdown(player.fd,SHUT_RDWR);
 					Shutdown(other.fd,SHUT_RDWR);
 					return false;
@@ -223,23 +238,18 @@ class Game{
 	}
 
 	public:
-	Game(int start_fd) 
+	Game(int start_fd) : 
+	player1{SENDWANT, start_fd, -1},
+	player2{NOPLAYER, -1, -1} 
 	{
-		player1.state = SENDWANT;
-		player1.fd = start_fd;
-		player1.battle_card = -1;
-
-		player2.state = 0;
-		player2.fd = -1;
-		player2.battle_card = -1;
-
-		array<char, 52> deck;
-		for(int i=0;i<52;i++) deck[i] = i;
+		array<char, DECKSIZE> deck;
+		for(int i=0;i<DECKSIZE;i++) deck[i] = i;
 
 		random_shuffle(deck.begin(), deck.end());
 		
-		for(int i=0;i<52;i++){
-			if(i<26)
+		int halfdeck = DECKSIZE/2;
+		for(int i=0;i<DECKSIZE;i++){
+			if(i<halfdeck)
 				player1.deck.push_back(deck[i]);	
 			else
 				player2.deck.push_back(deck[i]);
@@ -346,41 +356,47 @@ int main(int argc, char **argv){
 	vector<Game> games;
 	for(;;){
 		readfds = master;
-		if(select(maxfd+1, &readfds, NULL, NULL, NULL)< 0){
-			perror("Select error");
-			exit(1);
-		}
+
+		Select(maxfd+1, &readfds, NULL, NULL, NULL);
 		
 		for(int i=0;i<=maxfd;i++){
-			if(i == listener && FD_ISSET(listener, &readfds)){//a client is trying to connect
-				int newfd = accept_player(listener);
+			if(FD_ISSET(i,&readfds)){
+				if(i == listener){//a client is trying to connect
+					int newfd = accept_player(listener);
 
-				addToGame(games,newfd);
-				if(newfd > maxfd) maxfd = newfd;
-				FD_SET(newfd, &master);
-			}
-			
-			if(FD_ISSET(i,&readfds)){ //about to receive data
-				auto iter = games.begin();
-				for(; iter != games.end(); ++iter){
-					if(iter->isMember(i) && !iter->resolve(i)){
-							int fd1 = iter->fd1();
-							int fd2 = iter->fd2();
-							
-							if(fd1 >= 0) FD_CLR(fd1, &master);
-							if(fd2 >= 0) FD_CLR(fd2, &master);
-							games.erase(iter);
-					}
+					addToGame(games,newfd);
+					if(newfd > maxfd) maxfd = newfd;
+					FD_SET(newfd, &master);
 				}
-
-				if(iter == games.end()) i_error("Data on fd with no appointed game");
 				
-			}
-			
-		}
+				else{ //about to receive data
+					auto iter = games.begin();
+					auto end = games.end(); //since games.erase() modifies games.end()
+					for(; iter<end; ++iter){
+						if(iter->isMember(i)){
 
-	}
+							if(!iter->resolve(i)){
+								int fd1 = iter->fd1();
+								int fd2 = iter->fd2();
+								
+								if(fd1 >= 0) FD_CLR(fd1, &master);
+								if(fd2 >= 0) FD_CLR(fd2, &master);
+								games.erase(iter);
+							}
+						
+							break;
+						}
+					}
+
+					if(iter == end) i_error("Data on fd with no appointed game");
+					
+				}//else
+			}//if(FD_ISSET..
+			
+		}//for(int i=0..
+
+	}//for(;;)
 	
-	return 0;
+	exit(1);//Should never reach.
 }
 
