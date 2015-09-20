@@ -1,5 +1,5 @@
 server
 *.swp
-#many.sh
+many.sh
 client
-#client.cpp
+client.cpp
