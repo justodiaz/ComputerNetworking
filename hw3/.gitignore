@@ -5,3 +5,5 @@ client
 client.cpp
 cheat.cpp
 cheat
+splitmsg.cpp
+splitmsg
