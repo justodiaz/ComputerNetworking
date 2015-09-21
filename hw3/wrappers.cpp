@@ -22,11 +22,47 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 	int rc = recv(sockfd,buf,len,flags);
 
 	if(rc < 0){ 
-		perror("Receive failed"); 
+		perror("Receive error"); 
 		exit(1); 
 	}
 
 	return rc;
+}
+
+int Getaddrinfo(const char *node, const char *service, 
+				const struct addrinfo *hints, struct addrinfo **res){
+	int rc = getaddrinfo(node,service,hints,res);
+
+	if(rc){
+		if(rc == EAI_SYSTEM){
+			perror("getaddrinfo error");
+			exit(1);
+		}
+
+		i_error(string("getaddrinfo error: ") + gai_strerror(rc));
+	}
+
+	return rc;
+}
+int Socket(int domain, int type, int protocol) 
+{
+    int rc;
+
+    if ((rc = socket(domain, type, protocol)) < 0){
+		perror("Socket failed"); 
+		exit(1); 
+	}
+    return rc;
+}
+
+void Bind(int sockfd, struct sockaddr *my_addr, int addrlen) 
+{
+    int rc;
+
+    if ((rc = bind(sockfd, my_addr, addrlen)) < 0){
+		perror("Bind error"); 
+		exit(1); 
+	}
 }
 
 void Listen(int s, int backlog) 

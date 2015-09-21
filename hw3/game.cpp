@@ -34,9 +34,11 @@ int Game::_updateGame(Player &player,Player &other){
 	switch(player.state){
 	case SENDWANT:
 	{ //should send 'want' message
-		player.buf_i += Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
-	
-		if(player.buf_i < BUFSZ) return GAMEON;
+		int amnt = Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
+		if(amnt == 0) return GAMEERROR; //client closed their connection
+		
+		player.buf_i += amnt;
+		if(player.buf_i < BUFSZ) return GAMEON; //not enough according to protocol
 		
 		player.buf_i = 0;
 		
@@ -54,8 +56,10 @@ int Game::_updateGame(Player &player,Player &other){
 	}
 	case SENDCARD:
 	{//playing, should send a card
-		player.buf_i += Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
+		int amnt = Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
+		if(amnt == 0) return GAMEERROR;
 		
+		player.buf_i += amnt;
 		if(player.buf_i < BUFSZ) return GAMEON;
 
 		player.buf_i = 0;

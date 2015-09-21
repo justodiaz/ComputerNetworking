@@ -46,9 +46,8 @@ int main(int argc, char **argv){
 	if(argc < 2)
 		i_error(string("Usage: ") + argv[0] + " <port>");
 
-	
 	struct addrinfo hints = {0};
-	struct addrinfo *res, *rp;
+	struct addrinfo *res;
 
 	hints.ai_flags = AI_PASSIVE;
 	hints.ai_family = AF_INET6;
@@ -56,45 +55,28 @@ int main(int argc, char **argv){
 	hints.ai_protocol = 0; //"any"
 
 	cout << "Starting.." << endl;
-	int s = getaddrinfo(NULL, argv[1], &hints, &res);
+	Getaddrinfo(NULL, argv[1], &hints, &res);
 
-	if(s){
-		if(s == EAI_SYSTEM){
-			perror("getaddrinfo error");
-			exit(1);
-		}
+	int listener = Socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
-		i_error(string("getaddrinfo error: ") + gai_strerror(s));
-	}
-
-	int listener;
-	for(rp = res; rp != NULL; rp = rp->ai_next){
-		listener = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-
-		if(listener < 0) continue;
-
-		if(bind(listener, rp->ai_addr, rp->ai_addrlen) == 0) break;
-		
-		close(listener);
-	} 
+	Bind(listener, res->ai_addr, res->ai_addrlen);
 
 	freeaddrinfo(res);
-	if (rp == NULL) i_error("Could not bind");
-
-	cout << "Ready.." << endl;
 
 	Listen(listener, BACKLOG);
 
+	cout << "Ready.." << endl;
+
 	int maxfd = listener;
-	
+
 	fd_set master, readfds;
+
 	FD_ZERO(&master);
 	FD_ZERO(&readfds);
 	
 	FD_SET(listener, &master);
 
 	srand( unsigned (time(0)) );
-
 	vector<Game> games;
 
 	for(;;){
@@ -128,7 +110,7 @@ int main(int argc, char **argv){
 							{
 							case GAMEON: break;
 							case GAMEERROR:
-								cout << "Client misbehaved!" << endl;
+								cout << "Client misbehaved. Closed game and fds." << endl;
 								close_game = true;
 								break;
 							case GAMEEND:
@@ -162,9 +144,7 @@ int main(int argc, char **argv){
 					
 				}//else
 			}//if(FD_ISSET..
-			
 		}//for(int i=0..
-
 	}//for(;;)
 	
 	exit(1);//Should never reach.
