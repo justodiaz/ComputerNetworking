@@ -1,8 +1,8 @@
 TARGETS = client server
 CFLAGS = -Wall -std=c++11 -g -O0
 
-server: wrappers.cpp server.cpp wrappers.h
-	g++ $(CFLAGS) wrappers.cpp server.cpp -o server
+server: wrappers.cpp game.cpp server.cpp wrappers.h game.h
+	g++ $(CFLAGS) wrappers.cpp game.cpp server.cpp -o server
 
 all: $(TARGETS)
 

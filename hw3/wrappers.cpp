@@ -74,3 +74,12 @@ int Shutdown(int sockfd, int how){
 
 	return rc;
 }
+
+void Close(int fd){
+	int rc = close(fd);
+	
+	if(rc < 0){
+		perror("Close error");
+		exit(1);
+	}
+}
