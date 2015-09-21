@@ -3,3 +3,5 @@ server
 many.sh
 client
 client.cpp
+cheat.cpp
+cheat
