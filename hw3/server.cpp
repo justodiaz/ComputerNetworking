@@ -12,7 +12,7 @@
 #include <vector>
 #include <algorithm>
 #include <ctime>
-#include <cstdlib>
+#include "wrappers.h"
 
 #define WANTGAME 0
 #define GAMESTART 1
@@ -31,123 +31,27 @@
 #define DECKSIZE 52
 
 #define BACKLOG 100
+#define GAMEON 1
+#define GAMEERROR 2
+#define GAMEEND 3
+#define BADFD 4
+
+#define BUFSZ 2
 
 using namespace std;
-
-void i_error(string msg){
-	cerr << msg << std::endl;
-	exit(1);
-}
-
-//Wrapper functions
-ssize_t Send(int sockfd, const void*buf, size_t len, int flags){
-	int sent = send(sockfd,buf,len,flags);
-	if(sent < 0){
-		perror("Send error");
-		exit(1);
-	}
-
-	if(sent != (int)len)
-		i_error("Send didn't send all bytes...exiting");
-
-	return sent;
-}
-
-ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
-	int partial = recv(sockfd,buf,len,flags);
-
-	int total = 0;
-
-	while(partial > 0){
-		total += partial;
-		len -= partial;
-		if(len <= 0) break;
-		partial = recv(sockfd,(char *)buf + partial, len, 0);
-	}
-
-	if(partial < 0){ 
-		perror("Receive failed"); 
-		exit(1); 
-	}
-
-	return total;
-}
-
-void Listen(int s, int backlog) 
-{
-    int rc;
-
-    if ((rc = listen(s,  backlog)) < 0){
-		perror("Listen error");
-		exit(1);
-	}
-}
-
-int Accept(int s, struct sockaddr *addr, socklen_t *addrlen) 
-{
-    int rc;
-
-    if ((rc = accept(s, addr, addrlen)) < 0){
-		perror("Accept error");
-		exit(1);
-	}
-
-    return rc;
-}
-
-int Select(int  n, fd_set *readfds, fd_set *writefds,
-	   fd_set *exceptfds, struct timeval *timeout) 
-{
-    int rc;
-
-    if ((rc = select(n, readfds, writefds, exceptfds, timeout)) < 0){
-		perror("Select error");
-		exit(1);
-	}
-
-    return rc;
-}
-
-int accept_player(int listener){	
-	int newfd;
-	struct sockaddr_storage a_client;
-	socklen_t s_client = sizeof a_client;
-	
-	newfd = Accept(listener, (struct sockaddr *) &a_client, &s_client);
-	cout << "Client connected." << endl;	
-
-	return newfd;
-}
-
-int Shutdown(int sockfd, int how){
-	int rc;
-	rc = shutdown(sockfd,how);
-	if(rc < 0){
-		perror("Shutdown error");
-		exit(1);
-	}
-
-	return rc;
-}
-
 
 typedef struct {
 	int state;
 	int fd;
 	int battle_card;
+	char buf[BUFSZ];
+	int buf_i;
 	vector<char> deck;
 } Player;
 
 class Game{
 	Player player1;
 	Player player2;
-
-	void clear_fds(Player &player, Player &other){
-		cout << "Client on fd " << player.fd << " misbehaved." <<endl;
-		Shutdown(player.fd,SHUT_RDWR);
-		
-		if(other.state != NOPLAYER) Shutdown(other.fd,SHUT_RDWR);
-	}
 
 	bool valid_card(vector<char> &mydeck, char card){
 		auto iter = find(mydeck.begin(),mydeck.end(),card);
@@ -177,17 +81,18 @@ class Game{
 			
 	}
 
-	bool _resolve(Player &player,Player &other){
+	int _updateGame(Player &player,Player &other){
 		switch(player.state){
 		case SENDWANT:
 		{ //should send 'want' message
-			char want[2] = {0};
-			Recv(player.fd,want, sizeof want,0);
-
-			if(want[0] != WANTGAME || want[1] != 0){
-				clear_fds(player,other);
-				return false;
-			}
+			player.buf_i += Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
+		
+			if(player.buf_i < BUFSZ) return GAMEON;
+			
+			player.buf_i = 0;
+			
+			if(player.buf[0] != WANTGAME || player.buf[1] != 0)
+				return GAMEERROR;
 
 			player.state = SENDCARD;
 
@@ -200,24 +105,23 @@ class Game{
 		}
 		case SENDCARD:
 		{//playing, should send a card
-			char play[2] = {0};
-			Recv(player.fd,play,sizeof play,0);
-			if(play[0] != PLAYCARD || !valid_card(player.deck, play[1])){
-				clear_fds(player,other);
-				return false;
-			}
+			player.buf_i += Recv(player.fd,player.buf+player.buf_i, BUFSZ-player.buf_i,0);
+			//int amnt = Recv(player.fd,play,sizeof play,0);
+			
+			if(player.buf_i < BUFSZ) return GAMEON;
 
-			player.battle_card = (int)play[1];	
+			player.buf_i = 0;
+
+			if(player.buf[0] != PLAYCARD || !valid_card(player.deck, player.buf[1]))
+				return GAMEERROR;
+
+			player.battle_card = (int)player.buf[1];	
 
 			if(other.state == INBATTLE){
 				play_battle();
 
-				if(player.deck.empty() || other.deck.empty()) {
-					cout << "Game ended." <<endl;
-					Shutdown(player.fd,SHUT_RDWR);
-					Shutdown(other.fd,SHUT_RDWR);
-					return false;
-				}
+				if(player.deck.empty() || other.deck.empty()) //if one is empty, ther other is too
+					return GAMEEND;
 
 				player.state = other.state = SENDCARD;
 			}
@@ -227,20 +131,20 @@ class Game{
 			break;	
 		}
 		case INBATTLE: //sending data after card already sent	
-			clear_fds(player,other);
+			return GAMEERROR;
 			break;
 
-		default: i_error("Game::Resolve invalid state");
+		default: i_error("updateGame: invalid state.");
 
 		}
 		
-		return true;
+		return GAMEON;
 	}
 
 	public:
 	Game(int start_fd) : 
-	player1{SENDWANT, start_fd, -1},
-	player2{NOPLAYER, -1, -1} 
+	player1{SENDWANT, start_fd, -1, {0}, 0},
+	player2{NOPLAYER, -1, -1, {0}, 0} 
 	{
 		array<char, DECKSIZE> deck;
 		for(int i=0;i<DECKSIZE;i++) deck[i] = i;
@@ -267,13 +171,11 @@ class Game{
 		return true;
 	}
 	
-	bool resolve(int fd){
+	int updateGame(int fd){
+		if(fd == player1.fd) return _updateGame(player1,player2);
+		if(fd == player2.fd) return _updateGame(player2,player1);
 
-		if(fd == player1.fd) return _resolve(player1,player2);
-		else if(fd == player2.fd) return _resolve(player2,player1);
-		else i_error("Game::Resolve received invalid fd"); 
-
-		return false;
+		return BADFD;
 	}
 
 	int fd1(){ 
@@ -287,8 +189,17 @@ class Game{
 	}
 
 };
-
 		
+int acceptPlayer(int listener){	
+	int newfd;
+	struct sockaddr_storage a_client;
+	socklen_t s_client = sizeof a_client;
+	
+	newfd = Accept(listener, (struct sockaddr *) &a_client, &s_client);
+	cout << "Client connected." << endl;	
+
+	return newfd;
+}
 
 void addToGame(vector<Game> &games,int newfd){
 	auto iter = games.begin();
@@ -354,7 +265,9 @@ int main(int argc, char **argv){
 	FD_SET(listener, &master);
 
 	srand( unsigned (time(0)) );
+
 	vector<Game> games;
+
 	for(;;){
 		readfds = master;
 
@@ -363,7 +276,7 @@ int main(int argc, char **argv){
 		for(int i=0;i<=maxfd;i++){
 			if(FD_ISSET(i,&readfds)){
 				if(i == listener){//a client is trying to connect
-					int newfd = accept_player(listener);
+					int newfd = acceptPlayer(listener);
 
 					addToGame(games,newfd);
 					if(newfd > maxfd) maxfd = newfd;
@@ -375,21 +288,46 @@ int main(int argc, char **argv){
 					auto end = games.end(); //since games.erase() modifies games.end()
 					for(; iter<end; ++iter){
 						if(iter->isMember(i)){
+							
+							int result = iter->updateGame(i);
+		
+							int fd1 = iter->fd1();
+							int fd2 = iter->fd2();
 
-							if(!iter->resolve(i)){
-								int fd1 = iter->fd1();
-								int fd2 = iter->fd2();
-								
-								if(fd1 >= 0) FD_CLR(fd1, &master);
-								if(fd2 >= 0) FD_CLR(fd2, &master);
+							bool close_game = false;
+							switch(result)
+							{
+							case GAMEON: break;
+							case GAMEERROR:
+								cout << "Client misbehaved!" << endl;
+								close_game = true;
+								break;
+							case GAMEEND:
+								cout << "A game was completed." << endl;
+								close_game = true;
+								break;
+							case BADFD:
+								cout << "Error: Bad fd passed to updateGame." << endl;
+							default: i_error("Error: updateGame");
+							}
+
+							if(close_game){
+								if(fd1 >= 0) {
+									Shutdown(fd1,SHUT_RDWR);
+									FD_CLR(fd1, &master);
+								}
+								if(fd2 >= 0) {
+									Shutdown(fd2,SHUT_RDWR);
+									FD_CLR(fd2, &master);
+								}
 								games.erase(iter);
 							}
 						
-							break;
+							break; //stop searching for the game the fd belongs in
 						}
 					}
 
-					if(iter == end) i_error("Data on fd with no appointed game");
+					if(iter == end) i_error("Error: client fd socket has data but not in a game.");
 					
 				}//else
 			}//if(FD_ISSET..
