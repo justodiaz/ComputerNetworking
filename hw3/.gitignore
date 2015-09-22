@@ -7,3 +7,8 @@ cheat.cpp
 cheat
 splitmsg.cpp
 splitmsg
+1byte_client
+bad_play_card_client
+bad_want_game_client
+lazy_10sec_client
+reuse_card_client

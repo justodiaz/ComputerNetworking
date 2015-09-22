@@ -94,8 +94,8 @@ int Game::_updateGame(Player &player,Player &other){
 }
 
 Game::Game(int start_fd) : 
-	player1{SENDWANT, start_fd, -1, {0}, 0},
-	player2{NOPLAYER, -1, -1, {0}, 0} 
+	player1{SENDWANT, start_fd, -1, {-1,-1}, 0},
+	player2{NOPLAYER, -1, -1, {-1,-1}, 0} 
 	{
 		array<char, DECKSIZE> deck;
 		for(int i=0;i<DECKSIZE;i++) deck[i] = i;

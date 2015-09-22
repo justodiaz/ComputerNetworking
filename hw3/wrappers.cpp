@@ -22,6 +22,7 @@ ssize_t Recv(int sockfd, void *buf, size_t len, int flags){
 	int rc = recv(sockfd,buf,len,flags);
 
 	if(rc < 0){ 
+		return 0; //in this case we treat as client left, so close their socket
 		perror("Receive error"); 
 		exit(1); 
 	}
