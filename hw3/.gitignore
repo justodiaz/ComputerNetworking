@@ -5,10 +5,12 @@ client
 client.cpp
 cheat.cpp
 cheat
-splitmsg.cpp
-splitmsg
+testclient.cpp
+testclient
 1byte_client
 bad_play_card_client
 bad_want_game_client
 lazy_10sec_client
+lazy_1sec_client
+lots*
 reuse_card_client

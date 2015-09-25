@@ -124,12 +124,12 @@ int main(int argc, char **argv){
 
 							if(close_game){
 								if(fd1 >= 0) {
-									Shutdown(fd1,SHUT_RDWR);
+									//Shutdown(fd1,SHUT_RDWR); //Weird behavior when client ctrl-c
 									Close(fd1);
 									FD_CLR(fd1, &master);
 								}
 								if(fd2 >= 0) {
-									Shutdown(fd2,SHUT_RDWR);
+									//Shutdown(fd2,SHUT_RDWR);
 									Close(fd2);
 									FD_CLR(fd2, &master);
 								}

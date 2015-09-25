@@ -5,7 +5,8 @@ case $1 in
 		./server $1;
 		;;
 	* ) 
-		echo "Usage: $0 [portnumber]"
+		echo "Usage: $0 [portnumber]";
+		exit 1;
 esac
 
-exit 0
+exit $? 
