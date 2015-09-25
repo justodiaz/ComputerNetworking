@@ -6,8 +6,8 @@ if [ "$1" = "client" ]; then
 	./client $2 $3;
 elif [ "$1" = "server" ]; then
 	make server;
-	./server $2;
+	./server $3;
 else
 	echo "Usage: $0 (client|server) [hostname] [portnumber]"
 fi
-exit 0
+exit $?
