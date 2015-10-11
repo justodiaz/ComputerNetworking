@@ -11,15 +11,14 @@
 #include <arpa/inet.h>
 #include "dns.h"
 
-
-
-int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, struct sockaddr_storage * nameservers, int nameserver_count);
-
 typedef struct addrinfo saddrinfo;
 typedef struct sockaddr_storage sss;
 int root_server_count;
 sss root_servers[255];
 static int debug=0;
+
+int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
+
 void usage() {
   printf("Usage: hw4 [-d] [-p port]\n\t-d: debug\n\t-p: port\n");
   exit(1);
@@ -131,7 +130,7 @@ int extract_answer(uint8_t * response, sss * result){
 }
 
 // wrapper for inet_ntop that takes a sockaddr_storage as argument
-const char * ss_ntop(struct sockaddr_storage * ss, char * dst, int dstlen)
+const char * ss_ntop(sss * ss, char * dst, int dstlen)
 {		  
   void * addr;
   if (ss->ss_family == AF_INET)
@@ -216,8 +215,8 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   // generate a random 16-bit number for session
   uint16_t query_id = (uint16_t) (random() & 0xffff);
   hdr->id = htons(query_id);
-  // set header flags to request recursive query
-  hdr->flags = htons(0x0100);	
+  // set header flags to not request recursive query
+  hdr->flags = htons(0x0000);	
   // 1 question, no answers or other records
   hdr->q_count=htons(1);
   // add the name
@@ -242,11 +241,11 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   return query_len;	
 }
 
-int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, struct sockaddr_storage * nameservers, int nameserver_count)
+int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
   //Assume that we're getting no more than 20 NS responses
   char recd_ns_name[20][255];
-  struct sockaddr_storage recd_ns_ips[20];
+  sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
   int response_size = 0;
@@ -259,7 +258,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     printf("resolve name called with packet size %d\n",packet_size);
 
   int chosen = random()%nameserver_count;
-  struct sockaddr_storage * chosen_ns = &nameservers[chosen];
+  sss * chosen_ns = &nameservers[chosen];
   if(debug)
   {
     printf("\nAsking for record using server %d out of %d\n",chosen, nameserver_count);
@@ -344,10 +343,18 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     if(htons(rr->type)==RECTYPE_A)
     {
 	  int i;
-	  for(i=0;i<20;i++){
+	  //Only loop if we saw NS records, this means we stored hostnames
+	  //of authoritive servers
+	  for(i=0;i<recd_ns_count;i++){
+		//Check to see name matches a stored hostname, erro check
 		if(strcmp(string_name, (char *)&recd_ns_name[i]) == 0){
-			char *ip = inet_ntoa(*((struct in_addr *)answer_ptr));
-			ss_pton(ip, &recd_ns_ips[i]);
+			//store ip address in next available spot
+			struct sockaddr_in * addr = (struct sockaddr_in *)&recd_ns_ips[recd_ip_count];
+			addr->sin_family = AF_INET;
+			addr->sin_addr = *((struct in_addr *)answer_ptr);
+
+		//	char *ip = inet_ntoa(*((struct in_addr *)answer_ptr));
+		//	ss_pton(ip, &recd_ns_ips[recd_ip_count]);
 			recd_ip_count++;
 		}
 	  }
@@ -371,8 +378,57 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     //CNAME record
     else if(htons(rr->type)==RECTYPE_CNAME)
     {
+	  //CNAME
       char ns_string[255];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
+
+	  //Temp buffers
+      uint8_t new_request[UDP_RECV_SIZE];      
+	  uint8_t new_response[UDP_RECV_SIZE];
+
+      //build the new request in temp buffer
+	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
+
+	  //Resolve the new name request, store it in temp buffer
+	  new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
+	
+		if(new_packet_size < 0) {
+			perror("Error trying to resolve cname\n");
+			exit(1);
+		}
+
+		//original request, store the orignial request hostname
+		char req_name_buf[255];
+		struct dns_hdr *req_hdr = (struct dns_hdr *)request; //needed to copy ID
+		uint8_t *req_name = request + sizeof(struct dns_hdr); 
+		from_dns_style(request,req_name,req_name_buf);
+
+		//Parse the new response into three sections: header, question hostname, and the rest
+		//We can copy everything, but we have to replace the response question hostname
+		char new_resp_name_buf[255];//Temp, won't be used, just want size
+		struct dns_hdr *new_resp_hdr = (struct dns_hdr*)new_response;
+
+		uint8_t *new_resp_name = new_response + sizeof(struct dns_hdr);
+		//get the size
+		int new_resp_name_len = from_dns_style(new_response,new_resp_name,new_resp_name_buf);
+
+		//A pointer to the beginning of everything else we want and
+		//size of the rest of the new response packet after the question host name
+		uint8_t *new_resp_rest = new_resp_name + new_resp_name_len;
+		int rest_len = new_packet_size - sizeof(struct dns_hdr) - new_resp_name_len;
+
+		//Overwrite original reponse with new response minus the question hostname
+		*header = *new_resp_hdr;
+	    header->id = req_hdr->id; //copy original request id
+
+		uint8_t *resp_name = response + sizeof(struct dns_hdr);
+		int req_name_len = to_dns_style(req_name_buf,resp_name); //place original request hostname
+		uint8_t *resp_rest = resp_name + req_name_len;
+
+		memcpy(resp_rest,new_resp_rest,rest_len);
+
+		response_size = sizeof(struct dns_hdr) + req_name_len + rest_len;
+ 
       if(debug)
         printf("The name %s is also known as %s.\n",				
             string_name, ns_string);
@@ -387,9 +443,24 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     // AAAA record
     else if(htons(rr->type)==RECTYPE_AAAA)	
     {
+	  char printbuf[INET6_ADDRSTRLEN];	
+	  int i;
+	  for(i=0;i<recd_ns_count;i++){
+		//Only after NS record, and stored hostname
+		if(strcmp(string_name, (char *)&recd_ns_name[i]) == 0){
+
+			struct sockaddr_in6 * addr = (struct sockaddr_in6 *)&recd_ns_ips[recd_ip_count];
+			addr->sin6_family = AF_INET6;
+			addr->sin6_addr = *((struct in6_addr *)answer_ptr);
+
+			//inet_ntop(AF_INET6,answer_ptr,printbuf,INET6_ADDRSTRLEN);//convert IPv6 network
+			//ss_pton(printbuf, &recd_ns_ips[recd_ip_count]);
+			recd_ip_count++;
+		}
+	  }
+
       if(debug)
       {
-        char printbuf[INET6_ADDRSTRLEN];	
         printf("The name %s resolves to IP addr: %s\n",
             string_name,
             inet_ntop(AF_INET6, answer_ptr, printbuf,INET6_ADDRSTRLEN));
@@ -489,6 +560,11 @@ int main(int argc, char ** argv){
 
     header = (struct dns_hdr *)response;
     
+
+	struct dns_hdr *req_hdr = (struct dns_hdr*)request;
+
+	req_hdr->flags = req_hdr->flags & htons(0xFEFF); //turn off RD
+
     packet_size = resolve_name(sockfd, request, packet_size, response, root_servers, root_server_count);
     if (packet_size <= 0)
     {
@@ -498,6 +574,7 @@ int main(int argc, char ** argv){
     if(debug)
       printf("outgoing packet size: %d\n",packet_size);
 
+	header->flags = header->flags | htons(0x0080);
     //send the response to client
     int sent_count = sendto(sockfd, response, packet_size, 0, (struct sockaddr*)&client_address, addrlen);
     if(debug)
