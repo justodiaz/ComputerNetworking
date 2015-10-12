@@ -9,13 +9,103 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <time.h>
 #include "dns.h"
+
 
 typedef struct addrinfo saddrinfo;
 typedef struct sockaddr_storage sss;
 int root_server_count;
 sss root_servers[255];
 static int debug=0;
+
+struct cache{
+	char hostname[255];
+	uint8_t response[UDP_RECV_SIZE];
+	int resp_sz;
+	time_t TTL;
+	struct cache *next;
+};
+
+struct cache *head = NULL;
+
+void add_cache(char *hostname, uint8_t* response, int resp_sz, time_t TTL){
+		struct cache *ptr = head;
+		struct cache *prev = NULL;
+
+		int add = 1;
+
+		while(ptr != NULL){
+			if(strcmp(hostname,ptr->hostname) == 0){
+				ptr->TTL = ptr->TTL > TTL ? TTL : ptr->TTL;
+				add = 0;
+				break;
+			}
+
+			prev = ptr;
+			ptr = ptr->next;
+		}
+			
+		if(add){
+			struct cache *newCache = (struct cache *)malloc(sizeof(struct cache));
+			strcpy(newCache->hostname,hostname);
+			memcpy(newCache->response,response,resp_sz);
+			newCache->resp_sz = resp_sz;
+			newCache->TTL = TTL+time(NULL);
+			newCache->next = NULL;
+			
+			if(debug) printf("Added cache with TTL of %d\n",(unsigned)newCache->TTL);
+
+			if(prev == NULL) head = newCache;
+			else prev->next = newCache;
+		}
+}
+
+
+int check_cache(uint8_t *request, uint8_t *response){
+
+		struct dns_hdr *req_hdr = (struct dns_hdr*)request;
+		uint8_t *req_name = request + sizeof(struct dns_hdr);
+		char name[255];
+		from_dns_style(request,req_name,name);
+
+		int sz = 0;
+		struct cache *ptr = head;
+		struct cache *prev = NULL;
+		
+		while(ptr != NULL){
+			if(strcmp(ptr->hostname,name) == 0){
+
+
+				if(ptr->TTL > time(NULL)){ //not expired
+
+					if(debug) printf("Cache hit on %s\n", name);
+					
+					sz = ptr->resp_sz;
+					memcpy(response,ptr->response,sz);
+					
+					struct dns_hdr* resp_hdr = (struct dns_hdr*)response;
+					
+					resp_hdr->id = req_hdr->id;
+				}
+				else{ //expired so erase it
+					if(debug) printf("%s in cache, but expired TTL\n", name);
+
+					struct cache *temp = ptr->next;
+					free(ptr);
+
+					if(prev != NULL) prev->next = temp;
+					else head = temp;
+
+				}
+			}
+				
+			prev = ptr;
+			ptr = ptr->next;
+		}
+
+		return sz;
+}
 
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
 
@@ -42,9 +132,10 @@ int extract_answer(uint8_t * response, sss * result){
 
 
   if(debug)
-    printf("in extract answer\n");
+    printf("****** In extract answer *********\n");
   // if we didn't get an answer, just quit
   if (answer_count == 0 ){
+	printf("Error in extract_answer, no answers\n");
     return 0;
   }
 
@@ -59,6 +150,7 @@ int extract_answer(uint8_t * response, sss * result){
 
   if(debug)
     printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
+
   if(answer_count+auth_count+other_count>50){
     printf("ERROR: got a corrupt packet\n");
     return -1;
@@ -243,6 +335,11 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
 
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
+
+  int psize = check_cache(request,response);
+  if(psize > 0) return psize;
+
+
   //Assume that we're getting no more than 20 NS responses
   char recd_ns_name[20][255];
   sss recd_ns_ips[20];
@@ -258,10 +355,11 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     printf("resolve name called with packet size %d\n",packet_size);
 
   int chosen = random()%nameserver_count;
-  sss * chosen_ns = &nameservers[chosen];
+  sss *chosen_ns = &nameservers[chosen];
+
   if(debug)
   {
-    printf("\nAsking for record using server %d out of %d\n",chosen, nameserver_count);
+    printf("\nAsking for record using server %d out of %d\n",chosen+1, nameserver_count);
   }
 
   /* using sockaddr to actually send a packet, so make sure the 
@@ -269,6 +367,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
    */
   if(debug)
     printf("ss family: %d\n",chosen_ns->ss_family);
+
   if(chosen_ns->ss_family == AF_INET)
     ((struct sockaddr_in *)chosen_ns)->sin_port = htons(53);
   else if(chosen_ns->ss_family==AF_INET6)
@@ -282,6 +381,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   }
   int send_count = sendto(sock, request, packet_size, 0, 
       (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
+
   if(send_count<0){
     perror("Send failed");
     exit(1);
@@ -289,6 +389,11 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
   // await the response - not calling recvfrom, don't care who is responding
   response_size = recv(sock, response, UDP_RECV_SIZE, 0);
+  if(response_size <= 0) {
+		printf("In resolve_name, recv failed\n");
+		return -1;
+	}
+
   // discard anything that comes in as a query instead of a response
   if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
   {
@@ -342,11 +447,18 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     //A record
     if(htons(rr->type)==RECTYPE_A)
     {
+      //An A record in the answer section, add response to cache
+	  if(a<answer_count){
+		add_cache(string_name, response, response_size, ntohl(rr->ttl));
+
+		if(debug)
+			printf("Added cache %s with TTL of %d\n", string_name, ntohl(rr->ttl));
+	  }
 	  int i;
 	  //Only loop if we saw NS records, this means we stored hostnames
 	  //of authoritive servers
 	  for(i=0;i<recd_ns_count;i++){
-		//Check to see name matches a stored hostname, erro check
+		//Check to see name matches a stored hostname, error check
 		if(strcmp(string_name, (char *)&recd_ns_name[i]) == 0){
 			//store ip address in next available spot
 			struct sockaddr_in * addr = (struct sockaddr_in *)&recd_ns_ips[recd_ip_count];
@@ -382,6 +494,11 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
       char ns_string[255];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
 
+      if(debug)
+        printf("CNAME: The name %s is also known as %s.\n",				
+            string_name, ns_string);
+
+
 	  //Temp buffers
       uint8_t new_request[UDP_RECV_SIZE];      
 	  uint8_t new_response[UDP_RECV_SIZE];
@@ -393,8 +510,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	  new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
 	
 		if(new_packet_size < 0) {
-			perror("Error trying to resolve cname\n");
-			exit(1);
+			perror("Error trying to resolve cname");
+			continue;
 		}
 
 		//original request, store the orignial request hostname
@@ -429,10 +546,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
 		response_size = sizeof(struct dns_hdr) + req_name_len + rest_len;
  
-      if(debug)
-        printf("The name %s is also known as %s.\n",				
-            string_name, ns_string);
-
+		if(answer_count > 0 && a < answer_count) break; //CNAME is an answer
     }
     // SOA record
     else if(htons(rr->type)==RECTYPE_SOA)
@@ -474,8 +588,54 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     answer_ptr+=htons(rr->datalen);
   }
 
-  if(answer_count == 0 && recd_ip_count > 0){
-		return resolve_name(sock,request,packet_size,response,recd_ns_ips,recd_ip_count);
+  if(answer_count == 0){
+		if(recd_ip_count >0) //We have more name servers to contact
+			return resolve_name(sock,request,packet_size,response,recd_ns_ips,recd_ip_count);
+		else if(recd_ns_count > 0){ //Unglued record
+			int c=0;
+			int new_packet_size=0;
+			do{
+			uint8_t new_request[UDP_RECV_SIZE];      
+			uint8_t new_response[UDP_RECV_SIZE];
+
+
+
+			do{
+				if(debug) printf("Trying to resolve nonglue record\n");
+				//build the new request in temp buffer
+				new_packet_size = construct_query(new_request,UDP_RECV_SIZE,recd_ns_name[c],RECTYPE_A);
+				//Resolve the new name request, store it in temp buffer
+				new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
+
+				c++;
+				if(new_packet_size < 0)
+					perror("Error trying to resolve unglued nameserver");
+
+			} while(new_packet_size<=0 && c < recd_ns_count); 
+		
+			//Tried resolving all non-glued name servers, none succeeded
+			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
+
+			if(debug) printf("Resolved a nonglue record, now continuing recursive search\n");
+			sss ns;
+			int ea_ret = extract_answer(new_response,&ns);
+			
+			if(ea_ret <= 0){
+				printf("Error trying to extract answer\n");
+				exit(1);
+			}
+			
+			new_packet_size = resolve_name(sock,request,packet_size,response,&ns,1);
+			} while(new_packet_size<=0 && c <recd_ns_count);
+
+			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
+
+			return new_packet_size;
+		}
+		else{
+		;	
+		}//Error no answers and no NS given
+
   }
 
   return response_size;
