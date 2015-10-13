@@ -400,6 +400,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     if (debug)
       printf("ss_family not set\n");
   }
+
   int send_count = sendto(sock, request, packet_size, 0, 
       (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
 
@@ -515,11 +516,11 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
       char ns_string[255];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
 
-		printf("ns_len: %d rr->datalen: %d\n", ns_len, ntohs(rr->datalen));
       if(debug)
         printf("CNAME: The name %s is also known as %s.\n",				
             string_name, ns_string);
 
+	 if(a<answer_count){
 
 	  //Temp buffers
       uint8_t new_request[UDP_RECV_SIZE];      
@@ -536,162 +537,58 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 			continue;
 		}
 
-		//original request, store the orignial request hostname
-	    char req_name_buf[255];
-		struct dns_hdr *req_hdr = (struct dns_hdr *)request; //needed to copy ID
-		uint8_t *req_name = request + sizeof(struct dns_hdr); 
-		from_dns_style(request,req_name,req_name_buf);
+		struct dns_rr backup_rr = *(rr); //Save current rr to add later
 
-		
-		struct dns_rr cname_rr = *(rr); //Save cname TTL
 		header->q_count = htons(1);
 		header->a_count = htons(2);
 		header->auth_count = htons(0);
 		header->other_count = htons(0);
 
-		uint8_t *follow = response + sizeof(struct dns_hdr);
-		int l1 = to_dns_style(string_name,follow);
+		//Question Section
+		uint8_t *ptr = response + sizeof(struct dns_hdr);
+		int l1 = to_dns_style(string_name,ptr);
 
-		follow += l1;
+		ptr += l1;
 
-		struct dns_query_section *resp_qfoot = (struct dns_query_section *)follow;
+		struct dns_query_section *query_end = (struct dns_query_section *)ptr;
+		query_end->type = ntohs(RECTYPE_A);
+		query_end->class = ntohs(DNS_CLASS_IN);
 
-		resp_qfoot->type = ntohs(RECTYPE_A);
-		resp_qfoot->class = ntohs(DNS_CLASS_IN);
+		ptr += sizeof(struct dns_query_section);
 
-		follow += sizeof(struct dns_query_section);
-
-		
+		//Answer section
 		char dummy[255];
-
 		int l2 = to_dns_style(ns_string,dummy);
+		backup_rr.datalen=htons(l2);
+		int bytes = add_rr(ptr,string_name,backup_rr,dummy);
 
-		cname_rr.datalen=htons(l2);
-
-		int bytes = add_rr(follow,string_name,cname_rr,dummy);
-
-		follow += bytes;
-
+		ptr += bytes;
+		
 		struct dns_rr new_rr;
 		char temp_name[255];
 		sss temp_ss = {0};
-		
-		sss *ss1 = &temp_ss;
-		extract_answer(new_response,temp_name,&new_rr,&temp_ss);
+		sss *ss_ptr = &temp_ss;
+
+		extract_answer(new_response,temp_name,&new_rr,ss_ptr);
 
 		uint8_t *value;
-		if(temp_ss.ss_family == AF_INET) 
-			value = (uint8_t*)&(((struct sockaddr_in *)ss1)->sin_addr);
+		if(ss_ptr->ss_family == AF_INET) 
+			value = (uint8_t*)&(((struct sockaddr_in *)ss_ptr)->sin_addr);
 		else
-			value = (uint8_t*)&(((struct sockaddr_in6 *)ss1)->sin6_addr);
+			value = (uint8_t*)&(((struct sockaddr_in6 *)ss_ptr)->sin6_addr);
 
-		int bytes2 = add_rr(follow,temp_name,new_rr,value);
+		int bytes2 = add_rr(ptr,temp_name,new_rr,value);
 
-
-		if (debug) printf("l1: %d l2: %d\n",l1,l2);
-	
 		response_size = sizeof(struct dns_hdr) + l1 + sizeof(struct dns_query_section)+bytes+bytes2;
-		
-		
+	
+		//Pickup from wireshark	
 		if(debug) {
 			sendto(sock, response, response_size, 0, 
 				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
 		}
-
-
-		
-
-
-		
-	//	//Parse the new response into three sections: header, question hostname, and the rest
-	//	//We can copy everything, but we have to replace the response question hostname
-	//	char new_resp_name_buf[255];//Temp, won't be used, just want size
-	//	struct dns_hdr *new_resp_hdr = (struct dns_hdr*)new_response;
-
-	//	uint8_t *new_resp_name = new_response + sizeof(struct dns_hdr);
-	//	//get the size
-	//	int new_resp_name_len = from_dns_style(new_response,new_resp_name,new_resp_name_buf);
-
-	//	//A pointer to the beginning of everything else we want and
-	//	//size of the rest of the new response packet after the question host name
-	//	uint8_t *new_resp_rest = new_resp_name + new_resp_name_len;
-	//	new_resp_rest += sizeof(struct dns_query_section);
-
-	//	int new_resp_name_len2 = from_dns_style(new_response,new_resp_rest,new_resp_name_buf);
-	//	
-	//	if(debug)printf("Answer hostname section of CNAME resolved is: %s\n",new_resp_name_buf);
-
-
-	//	new_resp_rest += new_resp_name_len2;
-	//	
-	//	struct dns_rr * new_resp_ansrr = (struct dns_rr*)new_resp_rest;
-	//	new_resp_rest += sizeof(struct dns_rr);  //points to IP answer
-
-
-
-	//	int rest_len = new_packet_size - sizeof(struct dns_hdr) - new_resp_name_len - sizeof(struct dns_query_section) - new_resp_name_len2;
-
-	//	//Overwrite original reponse with new response minus the question hostname
-
-	//	struct dns_rr cname_rr = *(rr);
-
-	//	*header = *new_resp_hdr;
-	//	header->id = req_hdr->id; //copy original request id
-
-	//	header->q_count = htons(1);
-	//	header->a_count = htons(2);
-	//	header->auth_count = htons(0);
-	//	header->other_count = htons(0);
-
-	//	uint8_t *resp_name = response + sizeof(struct dns_hdr);
-	//	//Question
-	//	int req_name_len = to_dns_style(req_name_buf,resp_name); //place original request hostname
-	//	uint8_t *resp_rest = resp_name + req_name_len;
-	//
-	//	struct dns_query_section *resp_qfoot = (struct dns_query_section *)resp_rest;
-
-	//	resp_qfoot->type = ntohs(RECTYPE_A);
-	//	resp_qfoot->class = ntohs(DNS_CLASS_IN);
-
-	//	resp_rest += sizeof(struct dns_query_section);
-
-	//	//Answer
-	//	//Add the two rr, one CNAME and another A
-	//	int req_name_len2 = to_dns_style(req_name_buf,resp_rest);
-	//	resp_rest += req_name_len2;
-
-	//	struct dns_rr *resp_ansrr = (struct dns_rr*)resp_rest;
-
-	//	*resp_ansrr = cname_rr; //Copy the cname ttl datalen
-	//	
-	//	//resp_ansrr->datalen = htons(ns_len);
-	//	resp_rest += sizeof(struct dns_rr);
-
-	//	int datalen = to_dns_style(new_resp_name_buf,resp_rest); //copied the cname
-
-	//	resp_ansrr->datalen = htons(datalen);
-
-	//	resp_rest += datalen;	
-
-	//	resp_rest += to_dns_style(new_resp_name_buf,resp_rest); //copied cname for A record
-	//	
-	//	resp_ansrr = (struct dns_rr*)resp_rest;
-	//	*resp_ansrr = *new_resp_ansrr;
- 
-	//	resp_rest += sizeof(struct dns_rr);
-
-	//	memcpy(resp_rest,new_resp_rest,resp_ansrr->datalen);
-
-	//	response_size = sizeof(struct dns_hdr) + req_name_len + sizeof(struct dns_query_section) + req_name_len2 + (2*sizeof(struct dns_rr))+  (2*datalen) + resp_ansrr->datalen;
-	//	if(debug) {
-	//	
-	//	sendto(sock, response, response_size, 0, 
-	//	  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
-
-	//	}
-
 	
-		if(answer_count > 0 && a < answer_count) break; //CNAME rr is an answer, ignore other rr
+		break; //CNAME rr is an answer, ignore other rr
+		}//if(a<answer_count)
     }
     // SOA record
     else if(htons(rr->type)==RECTYPE_SOA)
