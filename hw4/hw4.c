@@ -19,8 +19,9 @@ int root_server_count;
 sss root_servers[255];
 static int debug=0;
 
+#define BUFSIZE 500
 struct cache{
-	char hostname[255];
+	char hostname[BUFSIZE];
 	uint16_t type;
 	uint8_t response[UDP_RECV_SIZE];
 	int resp_sz;
@@ -71,7 +72,7 @@ int check_cache(uint8_t *request, uint8_t *response){
 
 		struct dns_hdr *req_hdr = (struct dns_hdr*)request;
 		uint8_t *req_name = request + sizeof(struct dns_hdr);
-		char name[255];
+		char name[BUFSIZE];
 		int namelen = from_dns_style(request,req_name,name);
 
 		struct dns_query_section *query_end = (struct dns_query_section *)(req_name + namelen);
@@ -136,9 +137,9 @@ void usage() {
 }
 
 typedef struct {
-	char name[255];
+	char name[BUFSIZE];
 	struct dns_rr rr;
-	uint8_t value[255];
+	uint8_t value[BUFSIZE];
 } answer_rr;	
 
 int add_rr(uint8_t *dst, answer_rr *record){
@@ -178,8 +179,8 @@ int extract_answer(uint8_t * response, answer_rr *result){
 
   // skip questions
   for(int q=0; q<question_count; q++){
-    char string_name[255];
-    memset(string_name,0,255);
+    char string_name[BUFSIZE];
+    memset(string_name,0,BUFSIZE);
     int size=from_dns_style(response, answer_ptr,string_name);
     answer_ptr+=size;
     answer_ptr+=4;
@@ -200,7 +201,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
   for(a=0; a<answer_count;a++)
   {
     // first the name this answer is referring to
-    char string_name[255];
+    char string_name[BUFSIZE];
     int dnsnamelen=from_dns_style(response,answer_ptr,string_name);
     answer_ptr += dnsnamelen;
 
@@ -227,7 +228,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     //CNAME record
     else if(htons(rr->type)==RECTYPE_CNAME)
     {
-      char ns_string[255];
+      char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
       if(debug)
         printf("The name %s is also known as %s.\n",				
@@ -336,7 +337,7 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   // it a reverse lookup. 
   in_addr_t rev_addr=inet_addr(hostname);
   if(rev_addr!=INADDR_NONE) {
-    static char reverse_name[255];		
+    static char reverse_name[BUFSIZE];		
     sprintf(reverse_name,"%d.%d.%d.%d.in-addr.arpa",
         (rev_addr&0xff000000)>>24,
         (rev_addr&0xff0000)>>16,
@@ -381,14 +382,14 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   if(psize > 0) return psize;
 
   //Assume that we're getting no more than 20 NS responses
-  char recd_ns_name[20][255];
+  char recd_ns_name[20][BUFSIZE];
   sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
   int response_size = 0;
   // if an entry in recd_ns_ips is 0.0.0.0, we treat it as unassigned
   memset(recd_ns_ips,0,sizeof(recd_ns_ips));
-  memset(recd_ns_name,0,20*255);
+  memset(recd_ns_name,0,20*BUFSIZE);
   int retries = 5;
   
   if(debug)
@@ -456,10 +457,10 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   int other_count = ntohs(header->other_count);
 	
   int query_len = 0; //length of query hostname
-  char query_name[255];
+  char query_name[BUFSIZE];
   // skip questions
   for(int q=0; q<question_count; q++){
-    memset(query_name,0,255);
+    memset(query_name,0,BUFSIZE);
     int size=from_dns_style(response, answer_ptr,query_name);
 	query_len += size; //add the lenghts of multiple quiery hostnames
     answer_ptr+=size;
@@ -479,7 +480,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   for(int a=0; a<answer_count+auth_count+other_count;a++)
   {
     // first the name this answer is referring to
-    char string_name[255];
+    char string_name[BUFSIZE];
     int dnsnamelen=from_dns_style(response,answer_ptr,string_name);
     answer_ptr += dnsnamelen;
 
@@ -532,7 +533,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     else if(htons(rr->type)==RECTYPE_CNAME)
     {
 	  //CNAME
-      char ns_string[255];
+      char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
 
       if(debug)
