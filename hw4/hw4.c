@@ -21,23 +21,24 @@ static int debug=0;
 
 struct cache{
 	char hostname[255];
+	uint16_t type;
 	uint8_t response[UDP_RECV_SIZE];
 	int resp_sz;
 	time_t TTL;
-	unsigned timestamp;
+	time_t timestamp;
 	struct cache *next;
 };
 
 struct cache *head = NULL;
 
-void add_cache(char *hostname, uint8_t* response, int resp_sz, time_t TTL){
+void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, time_t TTL){
 		struct cache *ptr = head;
 		struct cache *prev = NULL;
 
 		int add = 1;
 
 		while(ptr != NULL){
-			if(strcmp(hostname,ptr->hostname) == 0){
+			if(strcmp(hostname,ptr->hostname) == 0 && ptr->type == type){
 				if(debug) printf("%s already in cache, comparing ttls in cache ptr->TTL: %d, against TTL: %d\n", hostname,(unsigned)ptr->TTL,(unsigned)TTL);
 				ptr->TTL = ptr->TTL > TTL ? TTL : ptr->TTL;
 				add = 0;
@@ -49,11 +50,13 @@ void add_cache(char *hostname, uint8_t* response, int resp_sz, time_t TTL){
 		}
 			
 		if(add){
-			struct cache *newCache = (struct cache *)malloc(sizeof(struct cache));
+			struct cache *newCache = malloc(sizeof(struct cache));
 			strcpy(newCache->hostname,hostname);
+			newCache->type = type;
 			memcpy(newCache->response,response,resp_sz);
 			newCache->resp_sz = resp_sz;
-			newCache->TTL = TTL+time(NULL);
+			newCache->TTL = TTL;
+			newCache->timestamp = 0; //To be found after resolved
 			newCache->next = NULL;
 			
 			if(debug) printf("Added cache with TTL of %d\n",(unsigned)newCache->TTL);
@@ -69,19 +72,21 @@ int check_cache(uint8_t *request, uint8_t *response){
 		struct dns_hdr *req_hdr = (struct dns_hdr*)request;
 		uint8_t *req_name = request + sizeof(struct dns_hdr);
 		char name[255];
-		from_dns_style(request,req_name,name);
+		int namelen = from_dns_style(request,req_name,name);
+
+		struct dns_query_section *query_end = (struct dns_query_section *)(req_name + namelen);
+
+		uint16_t type = ntohs(query_end->type);
 
 		int sz = 0;
 		struct cache *ptr = head;
 		struct cache *prev = NULL;
 		
 		while(ptr != NULL){
-			if(strcmp(ptr->hostname,name) == 0){
-
-
+			if(strcmp(ptr->hostname,name) == 0 && ptr->type == type){
 				time_t now = time(NULL);
-				if(debug) printf("%s in cache: Time now: %d, time in ptr->TTL: %d\n",name,(unsigned)now,(unsigned)ptr->TTL);
-				if(ptr->TTL > now){ //not expired
+				if(debug) printf("%s in cache: Time now: %d, time in ptr->timestamp: %d\n",name,(unsigned)now,(unsigned)ptr->timestamp);
+				if(ptr->timestamp > now){ //not expired
 
 					if(debug) printf("Cache hit on %s\n", name);
 					
@@ -109,6 +114,18 @@ int check_cache(uint8_t *request, uint8_t *response){
 		}
 
 		return sz;
+}
+
+
+void set_timestamps(){
+		struct cache *ptr = head;
+		
+		while(ptr != NULL){
+			if(ptr->timestamp == 0){
+				ptr->timestamp = ptr->TTL + time(NULL);
+			}
+			ptr = ptr->next;
+		}
 }
 
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
@@ -454,11 +471,11 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   int other_count = ntohs(header->other_count);
 	
   int query_len = 0; //length of query hostname
+  char query_name[255];
   // skip questions
   for(int q=0; q<question_count; q++){
-    char string_name[255];
-    memset(string_name,0,255);
-    int size=from_dns_style(response, answer_ptr,string_name);
+    memset(query_name,0,255);
+    int size=from_dns_style(response, answer_ptr,query_name);
 	query_len += size; //add the lenghts of multiple quiery hostnames
     answer_ptr+=size;
     answer_ptr+=4; //jump over 2 bytes type and 2 bytes class
@@ -490,7 +507,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     {
       //An A record in the answer section, add response to cache
 	  if(a<answer_count){
-		add_cache(string_name, response, response_size, ntohl(rr->ttl));
+		add_cache(string_name, ntohs(rr->type),response, response_size, ntohl(rr->ttl));
 
 		if(debug)
 			printf("Added cache %s with TTL of %d\n", string_name, (unsigned)(ntohl(rr->ttl)));
@@ -658,7 +675,19 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     // AAAA record
     else if(htons(rr->type)==RECTYPE_AAAA)	
     {
+	  if(a<answer_count){
+		add_cache(string_name, ntohs(RECTYPE_A),response, response_size, ntohl(rr->ttl));
+	  }
+
 	  char printbuf[INET6_ADDRSTRLEN];	
+
+	  if(debug)
+      {
+        printf("The name %s resolves to IP addr: %s\n",
+            string_name,
+            inet_ntop(AF_INET6, answer_ptr, printbuf,INET6_ADDRSTRLEN));
+      }
+
 	  int i;
 	  for(i=0;i<recd_ns_count;i++){
 		//Only after NS record, and stored hostname
@@ -674,13 +703,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		}
 	  }
 
-      if(debug)
-      {
-        printf("The name %s resolves to IP addr: %s\n",
-            string_name,
-            inet_ntop(AF_INET6, answer_ptr, printbuf,INET6_ADDRSTRLEN));
-      }
-    }
+         }
     else
     {
       if(debug)
@@ -758,6 +781,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		}//Error no answers and no NS given
 
   }
+
+  set_timestamps();
 
   return response_size;
 
