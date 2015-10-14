@@ -162,14 +162,11 @@ int extract_answer(uint8_t * response, answer_rr *result){
   struct dns_hdr * header = (struct dns_hdr *) response;
   uint8_t * answer_ptr = response + sizeof(struct dns_hdr);
 
-  //memset(result,0,sizeof(sss));
-  
   // now answer_ptr points at the first question.
   int question_count = ntohs(header->q_count);
   int answer_count = ntohs(header->a_count);
   int auth_count = ntohs(header->auth_count);
   int other_count = ntohs(header->other_count);
-
 
   if(debug)
     printf("****** In extract answer *********\n");
@@ -224,9 +221,6 @@ int extract_answer(uint8_t * response, answer_rr *result){
 		strcpy(result[a].name,string_name);
 		result[a].rr = *rr;
 		memcpy(result[a].value,answer_ptr,ntohs(rr->datalen));
-        //((struct sockaddr_in*)result)->sin_family = AF_INET;
-        //((struct sockaddr_in*)result)->sin_addr = *((struct in_addr *)answer_ptr);
-        //return 1;
       }
       
     }
@@ -257,13 +251,6 @@ int extract_answer(uint8_t * response, answer_rr *result){
 		strcpy(result[a].name,string_name);
 		result[a].rr = *rr;
 		memcpy(result[a].value,answer_ptr,ntohs(rr->datalen));
-	 // strcpy(ret_name,string_name);
-	 // i*ret_rr = *rr;
-	 // memcpy(ret_value,answer_ptr,ntohs(rr->datalen));
-      //((struct sockaddr_in6*)result)->sin6_family = AF_INET6;
-      //((struct sockaddr_in6*)result)->sin6_addr = *((struct in6_addr *)answer_ptr);
-      //return 1;
-      
     }
     else
     {
@@ -390,10 +377,8 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
 
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
-
   int psize = check_cache(request,response);
   if(psize > 0) return psize;
-
 
   //Assume that we're getting no more than 20 NS responses
   char recd_ns_name[20][255];
@@ -523,8 +508,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 			addr->sin_family = AF_INET;
 			addr->sin_addr = *((struct in_addr *)answer_ptr);
 
-		//	char *ip = inet_ntoa(*((struct in_addr *)answer_ptr));
-		//	ss_pton(ip, &recd_ns_ips[recd_ip_count]);
 			recd_ip_count++;
 		}
 	  }
@@ -566,27 +549,18 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
 
 	  //Resolve the new name request, store it in temp buffer
-	  new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
+	  new_packet_size = resolve_name(sock, new_request,	
+									 new_packet_size, new_response, 
+									 root_servers, root_server_count);
 	
 		if(new_packet_size < 0) {
 			perror("Error trying to resolve cname");
 			continue;
 		}
 
-		//header->q_count = htons(1);
-		//header->a_count = htons(2);
-		//header->auth_count = htons(0);
-		//header->other_count = htons(0);
-
-/** Append answer rr's at the end of current response **/
+		/** Append answer rr's at the end of current response **/
 		uint8_t *append = answer_ptr + ns_len;
 				
-		//char temp_name[255];
-		//struct dns_rr new_rr;
-		//sss temp_ss = {0};
-		//uint8_t value[255];
-		//memset(value,0,255);
-
 		answer_rr ans_section[20];
 
 		//extract_answer(new_response,temp_name,&new_rr,value);
@@ -596,66 +570,20 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		header->a_count = htons(amt+1);
 		header->auth_count = htons(0);
 		header->other_count = htons(0);
-/*
-		uint8_t *value;
-		if(temp_ss.ss_family == AF_INET) 
-			value = (uint8_t*)&((struct sockaddr_in *)&temp_ss)->sin_addr;
-		else
-			value = (uint8_t*)&((struct sockaddr_in6 *)&temp_ss)->sin6_addr;
-*/
-		int bytes = 0;		
+
+		int total = 0;		
 		int j;
 		for(j=0;j<amt;j++){
-			bytes += add_rr(append,&ans_section[j]);
+			int bytes;
+			bytes = add_rr(append,&ans_section[j]);
 			append += bytes;
+			total += bytes;
 		}
-
-		//int bytes = add_rr(append,temp_name,new_rr,value);
 
 		response_size = sizeof(struct dns_hdr) 
 						+ query_len + sizeof(struct dns_query_section) //assuming 1 query 
 						+ dnsnamelen + sizeof(struct dns_rr) + ns_len  //assuming 1 cname is first
-						+ bytes;
-
-
-/** Write entire response on top of current response **/
-//		//Question Section
-//		struct dns_rr backup_rr = *(rr); //Save current rr to add later
-
-//		uint8_t *ptr = response + sizeof(struct dns_hdr);
-//		int l1 = to_dns_style(string_name,ptr);
-//
-//		ptr += l1;
-//
-//		struct dns_query_section *query_end = (struct dns_query_section *)ptr;
-//		query_end->type = ntohs(RECTYPE_A);
-//		query_end->class = ntohs(DNS_CLASS_IN);
-//
-//		ptr += sizeof(struct dns_query_section);
-//
-//		//Answer section
-//		char dummy[255];
-//		int l2 = to_dns_style(ns_string,dummy);
-//		backup_rr.datalen=htons(l2);
-//		int bytes = add_rr(ptr,string_name,backup_rr,dummy);
-//
-//		ptr += bytes;
-//		
-//		char temp_name[255];
-//		struct dns_rr new_rr;
-//		sss temp_ss = {0};
-//
-//		extract_answer(new_response,temp_name,&new_rr,&temp_ss);
-//
-//		uint8_t *value;
-//		if(temp_ss.ss_family == AF_INET) 
-//			value = (uint8_t*)&((struct sockaddr_in *)&temp_ss)->sin_addr;
-//		else
-//			value = (uint8_t*)&((struct sockaddr_in6 *)&temp_ss)->sin6_addr;
-//
-//		int bytes2 = add_rr(ptr,temp_name,new_rr,value);
-
-	//	response_size = sizeof(struct dns_hdr) +l1+ sizeof(struct dns_query_section)+bytes+bytes2;
+						+ total;
 	
 		//Pickup from wireshark	
 		if(debug) {
@@ -697,8 +625,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 			addr->sin6_family = AF_INET6;
 			addr->sin6_addr = *((struct in6_addr *)answer_ptr);
 
-			//inet_ntop(AF_INET6,answer_ptr,printbuf,INET6_ADDRSTRLEN);//convert IPv6 network
-			//ss_pton(printbuf, &recd_ns_ips[recd_ip_count]);
 			recd_ip_count++;
 		}
 	  }
@@ -741,11 +667,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 			if(debug) printf("Resolved a nonglue record, now continuing recursive search\n");
 			sss ns[20];	
 			answer_rr ans_section[20];
-			//sss ns;
-			//struct dns_rr rr;
-			//char dummy[255];
-			//uint8_t value[255];
-			//memset(value,0,255);
 	
 			int amt = extract_answer(new_response,ans_section);
 			
