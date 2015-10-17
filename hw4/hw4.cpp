@@ -151,7 +151,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     printf("****** In extract answer *********\n");
   // if we didn't get an answer, just quit
   if (answer_count == 0 ){
-	printf("Error in extract_answer, no answers\n");
+	printf("~~In Extract Answer: ERROR! No Answers\n");
     return 0;
   }
 
@@ -165,10 +165,10 @@ int extract_answer(uint8_t * response, answer_rr *result){
   }
 
   if(debug)
-    printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
+    printf("~~In Extract Answer: Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
 
   if(answer_count+auth_count+other_count>50){
-    printf("ERROR: got a corrupt packet\n");
+    printf("~~In Extract Answer: ERROR! Got a corrupt packet\n");
     return -1;
   }
 
@@ -191,7 +191,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     if(htons(rr->type)==RECTYPE_A)
     {
       if(debug)
-        printf("~~In Exract Answer: The name %s resolves to IP addr: %s\n",
+        printf("~~In Exract Answer: A : The name %s resolves to IP addr: %s\n",
             string_name,
             inet_ntoa(*((struct in_addr *)answer_ptr)));
       //if it's in the answer section, then we got our answer
@@ -209,7 +209,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
       char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
       if(debug)
-        printf("The name %s is also known as %s.\n",				
+        printf("~~In Extract Answer: CNAME : The name %s is also known as %s.\n",				
             string_name, ns_string);
 
 		char no_compress[BUFSIZE];
@@ -226,7 +226,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
       if(debug)
       {
         char printbuf[INET6_ADDRSTRLEN];	
-        printf("~~In Exract Answer: The name %s resolves to IP addr: %s\n",
+        printf("~~In Exract Answer: AAAA : The name %s resolves to IP addr: %s\n",
             string_name,
             inet_ntop(AF_INET6, answer_ptr, printbuf,INET6_ADDRSTRLEN));
       }
@@ -238,7 +238,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     else
     {
       if(debug)
-        printf("got unknown record type %hu\n", htons(rr->type));
+        printf("~~In Extract Answer: Got unknown record type %hu\n", htons(rr->type));
     }
     answer_ptr+=htons(rr->datalen);
   }
@@ -363,6 +363,14 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
   //Assume that we're getting no more than 20 NS responses
   char recd_ns_name[20][BUFSIZE];
+
+  char cname[20][BUFSIZE]; //ns_name
+  int cname_count = 0;
+  int to_cname_bytes =0; //number of bytes before appending the reslution of cname
+  uint8_t *cname_append; //Pointer to where to append the resolution of cname
+  bool resolve_cname = false; //Is there a cname to resolve?
+
+
   sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
@@ -446,7 +454,9 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     answer_ptr+=size;
     answer_ptr+=4; //jump over 2 bytes type and 2 bytes class
   }
-
+  
+  to_cname_bytes = sizeof(struct dns_hdr) 
+						+ query_len + sizeof(struct dns_query_section);
   if(debug)
     printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
   if(answer_count+auth_count+other_count>50){
@@ -477,6 +487,14 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
 		if(debug)
 			printf("Added cache %s with TTL of %d\n", string_name, (unsigned)(ntohl(rr->ttl)));
+
+		//Does this A record resolve a cname already seen?
+		//Have cname branch not break
+		for(int i=0;i<cname_count;i++){
+			if(strcmp(string_name,(char*)&cname[i]) == 0){
+				resolve_cname = false;
+			}
+		}
 	  }
 	  int i;
 	  //Only loop if we saw NS records, this means we stored hostnames
@@ -511,69 +529,78 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     }
     //CNAME record
     else if(htons(rr->type)==RECTYPE_CNAME)
-    {
+	{    
 	  //CNAME
       char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
 
       if(debug)
-        printf("CNAME: The name %s is also known as %s.\n",				
+        printf("In resolve_name : CNAME: The name %s is also known as %s.\n",				
             string_name, ns_string);
 
 	 if(a<answer_count){
 
-	  //Temp buffers
-      uint8_t new_request[UDP_RECV_SIZE];      
-	  uint8_t new_response[UDP_RECV_SIZE];
+	  strcpy((char*)&cname[cname_count],ns_string);
+      to_cname_bytes += dnsnamelen + sizeof(struct dns_rr) + ns_len; //assuming 1 cname is first
 
-      //build the new request in temp buffer
-	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
+	  cname_append = answer_ptr + ns_len;
 
-	  //Resolve the new name request, store it in temp buffer
-	  new_packet_size = resolve_name(sock, new_request,	
-									 new_packet_size, new_response, 
-									 root_servers, root_server_count);
+	  resolve_cname = true;
+	  cname_count++;
+
+	  break; //CNAME rr is an answer, ignore other rr
+	  }//if(a<answer_count)
+//
+//	  //Temp buffers
+//      uint8_t new_request[UDP_RECV_SIZE];      
+//	  uint8_t new_response[UDP_RECV_SIZE];
+//
+//      //build the new request in temp buffer
+//	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
+//
+//	  //Resolve the new name request, store it in temp buffer
+//	  new_packet_size = resolve_name(sock, new_request,	
+//									 new_packet_size, new_response, 
+//									 root_servers, root_server_count);
+//	
+//		if(new_packet_size < 0) {
+//			perror("Error trying to resolve cname");
+//			return response_size;
+//		}
+//
+//		/** Append answer rr's at the end of current response **/
+//		uint8_t *append = answer_ptr + ns_len;
+//				
+//		answer_rr ans_section[20];
+//
+//		//extract_answer(new_response,temp_name,&new_rr,value);
+//		int amt = extract_answer(new_response,ans_section);
+//
+//		header->q_count = htons(1);
+//		header->a_count = htons(amt+1);
+//		header->auth_count = htons(0);
+//		header->other_count = htons(0);
+//
+//		int total = 0;		
+//		int j;
+//		for(j=0;j<amt;j++){
+//			int bytes;
+//			bytes = add_rr(append,&ans_section[j]);
+//			append += bytes;
+//			total += bytes;
+//		}
+//
+//		response_size = sizeof(struct dns_hdr) 
+//						+ query_len + sizeof(struct dns_query_section) //assuming 1 query 
+//						+ dnsnamelen + sizeof(struct dns_rr) + ns_len  //assuming 1 cname is first
+//						+ total;
+//	
+//		//Pickup from wireshark	
+//		if(debug) {
+//			sendto(sock, response, response_size, 0, 
+//				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
+//		}
 	
-		if(new_packet_size < 0) {
-			perror("Error trying to resolve cname");
-			return response_size;
-		}
-
-		/** Append answer rr's at the end of current response **/
-		uint8_t *append = answer_ptr + ns_len;
-				
-		answer_rr ans_section[20];
-
-		//extract_answer(new_response,temp_name,&new_rr,value);
-		int amt = extract_answer(new_response,ans_section);
-
-		header->q_count = htons(1);
-		header->a_count = htons(amt+1);
-		header->auth_count = htons(0);
-		header->other_count = htons(0);
-
-		int total = 0;		
-		int j;
-		for(j=0;j<amt;j++){
-			int bytes;
-			bytes = add_rr(append,&ans_section[j]);
-			append += bytes;
-			total += bytes;
-		}
-
-		response_size = sizeof(struct dns_hdr) 
-						+ query_len + sizeof(struct dns_query_section) //assuming 1 query 
-						+ dnsnamelen + sizeof(struct dns_rr) + ns_len  //assuming 1 cname is first
-						+ total;
-	
-		//Pickup from wireshark	
-		if(debug) {
-			sendto(sock, response, response_size, 0, 
-				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
-		}
-	
-		break; //CNAME rr is an answer, ignore other rr
-		}//if(a<answer_count)
     }
     // SOA record
     else if(htons(rr->type)==RECTYPE_SOA)
@@ -682,6 +709,51 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		else{
 		;	
 		}//Error no answers and no NS given
+
+  }
+
+  if(cname_count > 0 && resolve_cname){
+	  //Temp buffers
+      uint8_t new_request[UDP_RECV_SIZE];      
+	  uint8_t new_response[UDP_RECV_SIZE];
+
+      //build the new request in temp buffer
+	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,(char*)&cname[cname_count-1],RECTYPE_A);
+
+	  //Resolve the new name request, store it in temp buffer
+	  new_packet_size = resolve_name(sock, new_request,	
+									 new_packet_size, new_response, 
+									 root_servers, root_server_count);
+	
+		if(new_packet_size < 0) {
+			perror("Error trying to resolve cname");
+			return response_size;
+		}
+				
+		answer_rr ans_section[20];
+
+		int amt = extract_answer(new_response,ans_section);
+
+		header->q_count = htons(1);
+		header->a_count = htons(amt+1);
+		header->auth_count = htons(0);
+		header->other_count = htons(0);
+
+		int total = 0;		
+		for(int j=0;j<amt;j++){
+			int bytes;
+			bytes = add_rr(cname_append,&ans_section[j]);
+			cname_append += bytes;
+			total += bytes;
+		}
+
+		response_size = to_cname_bytes + total;
+	
+		//Pickup from wireshark	
+		if(debug) {
+			sendto(sock, response, response_size, 0, 
+				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
+		}
 
   }
 
