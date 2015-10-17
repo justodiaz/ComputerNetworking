@@ -11,30 +11,17 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include "dns.h"
+#include "hw4.h"
 
-
-typedef struct addrinfo saddrinfo;
-typedef struct sockaddr_storage sss;
 int root_server_count;
 sss root_servers[255];
 static int debug=0;
 
-#define BUFSIZE 500
-struct cache{
-	char hostname[BUFSIZE];
-	uint16_t type;
-	uint8_t response[UDP_RECV_SIZE];
-	int resp_sz;
-	time_t TTL;
-	time_t timestamp;
-	struct cache *next;
-};
-
-struct cache *head = NULL;
+cache *head = NULL;
 
 void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, time_t TTL){
-		struct cache *ptr = head;
-		struct cache *prev = NULL;
+		cache *ptr = head;
+		cache *prev = NULL;
 
 		int add = 1;
 
@@ -51,7 +38,7 @@ void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, ti
 		}
 			
 		if(add){
-			struct cache *newCache = malloc(sizeof(struct cache));
+			cache *newCache = (cache *)malloc(sizeof(cache));
 			strcpy(newCache->hostname,hostname);
 			newCache->type = type;
 			memcpy(newCache->response,response,resp_sz);
@@ -80,15 +67,13 @@ int check_cache(uint8_t *request, uint8_t *response){
 		uint16_t type = ntohs(query_end->type);
 
 		int sz = 0;
-		struct cache *ptr = head;
-		struct cache *prev = NULL;
+		cache *ptr = head;
+		cache *prev = NULL;
 		
 		while(ptr != NULL){
 			if(strcmp(ptr->hostname,name) == 0 && ptr->type == type){
 				time_t now = time(NULL);
-				if(debug) printf("%s in cache: Time now: %d, time in ptr->timestamp: %d\n",name,(unsigned)now,(unsigned)ptr->timestamp);
 				if(ptr->timestamp > now){ //not expired
-
 					if(debug) printf("Cache hit on %s\n", name);
 					
 					sz = ptr->resp_sz;
@@ -101,13 +86,15 @@ int check_cache(uint8_t *request, uint8_t *response){
 				else{ //expired so erase it
 					if(debug) printf("%s in cache, but expired TTL\n", name);
 
-					struct cache *temp = ptr->next;
+					cache *temp = ptr->next;
+				
 					free(ptr);
 
 					if(prev != NULL) prev->next = temp;
 					else head = temp;
 
 				}
+				break;
 			}
 				
 			prev = ptr;
@@ -117,9 +104,8 @@ int check_cache(uint8_t *request, uint8_t *response){
 		return sz;
 }
 
-
 void set_timestamps(){
-		struct cache *ptr = head;
+		cache *ptr = head;
 		
 		while(ptr != NULL){
 			if(ptr->timestamp == 0){
@@ -129,18 +115,10 @@ void set_timestamps(){
 		}
 }
 
-int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
-
 void usage() {
   printf("Usage: hw4 [-d] [-p port]\n\t-d: debug\n\t-p: port\n");
   exit(1);
 }
-
-typedef struct {
-	char name[BUFSIZE];
-	struct dns_rr rr;
-	uint8_t value[BUFSIZE];
-} answer_rr;	
 
 int add_rr(uint8_t *dst, answer_rr *record){
 	int bytes = to_dns_style(record->name,dst);
@@ -234,9 +212,13 @@ int extract_answer(uint8_t * response, answer_rr *result){
         printf("The name %s is also known as %s.\n",				
             string_name, ns_string);
 
+		char no_compress[BUFSIZE];
+		int no_comp_len = to_dns_style(ns_string,(uint8_t*)no_compress);
+
 		strcpy(result[a].name,string_name);
 		result[a].rr = *rr;
-		memcpy(result[a].value,answer_ptr,ntohs(rr->datalen));
+		result[a].rr.datalen = htons(no_comp_len);
+		memcpy(result[a].value,no_compress,no_comp_len);
     }
     // AAAA record
     else if(htons(rr->type)==RECTYPE_AAAA)	
@@ -296,7 +278,7 @@ int ss_pton(const char * src, void * dst){
     char printbuf[INET6_ADDRSTRLEN];
     struct sockaddr_in6 * out = (struct sockaddr_in6*)dst;
     // for socket purposes, we need a v4-mapped ipv6 address
-    unsigned char * mapped_dst = (void*)&out->sin6_addr;
+    unsigned char * mapped_dst = (unsigned char*)&out->sin6_addr;
     // take the first 4 bytes of buf and put them in the last 4
     // of the return value
     memcpy(mapped_dst+12,buf,4);
@@ -327,8 +309,6 @@ void read_server_file() {
     ss_pton(addr,&root_servers[root_server_count++]);
   }
 }
-
-
 
 /* constructs a DNS query message for the provided hostname */
 int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
@@ -370,8 +350,8 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   }
   query_len+=2;
   //finally the class: INET
-  uint16_t *class = (uint16_t*)(query+query_len);
-  *class = htons(1);
+  uint16_t *iclass = (uint16_t*)(query+query_len);
+  *iclass = htons(1);
   query_len += 2;
   return query_len;	
 }
@@ -556,7 +536,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	
 		if(new_packet_size < 0) {
 			perror("Error trying to resolve cname");
-			continue;
+			return response_size;
 		}
 
 		/** Append answer rr's at the end of current response **/
@@ -636,6 +616,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
       if(debug)
         printf("got unknown record type %hu\n", htons(rr->type));
     }
+
     answer_ptr+=htons(rr->datalen);
   }
 
@@ -717,7 +698,7 @@ int main(int argc, char ** argv){
   struct dns_hdr * header=NULL;
   char * question_domain=NULL;
   char client_ip[INET6_ADDRSTRLEN];
-  char *optString = "dp";
+  char *optString = (char *)"dp";
   struct timeval timeout;
   
   int opt = getopt(argc, argv, optString);
