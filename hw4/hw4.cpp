@@ -10,9 +10,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <iostream>
 #include "dns.h"
 #include "hw4.h"
 
+using namespace std;
 int root_server_count;
 sss root_servers[255];
 static int debug=0;
@@ -356,6 +358,29 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   return query_len;	
 }
 
+
+bool check_SERVFAIL(uint8_t *response){
+	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
+	
+	uint16_t rcode = ntohs(resp_hdr->flags & htons(0x000F));
+
+	return rcode == 0x2;
+}
+int build_SERVFAIL(uint8_t *request, uint8_t *response){
+	struct dns_hdr *req_hdr = (struct dns_hdr*)request;
+	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
+
+	*resp_hdr = *req_hdr;
+
+	resp_hdr->flags =  htons(0x0);	
+	resp_hdr->flags =  resp_hdr->flags | htons(0x0002);	
+	resp_hdr->q_count = htons(0);
+	resp_hdr->a_count = htons(0);
+	resp_hdr->auth_count = htons(0);
+	resp_hdr->other_count = htons(0);
+
+	return sizeof(dns_hdr);
+}
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
   int psize = check_cache(request,response);
@@ -370,7 +395,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   uint8_t *cname_append; //Pointer to where to append the resolution of cname
   bool resolve_cname = false; //Is there a cname to resolve?
 
-
   sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
@@ -378,18 +402,26 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   // if an entry in recd_ns_ips is 0.0.0.0, we treat it as unassigned
   memset(recd_ns_ips,0,sizeof(recd_ns_ips));
   memset(recd_ns_name,0,20*BUFSIZE);
-  int retries = 5;
+  int retries = 3;
   
   if(debug)
     printf("resolve name called with packet size %d\n",packet_size);
 
-  int chosen = random()%nameserver_count;
-  sss *chosen_ns = &nameservers[chosen];
+	int c;
+	sss *chosen_ns;
 
+  for(c=0;c<nameserver_count;c++){
+ // int chosen = random()%nameserver_count;
+  int chosen = c;
+  retries = 3;
   if(debug)
   {
     printf("\nAsking for record using server %d out of %d\n",chosen+1, nameserver_count);
   }
+
+  while(retries > 0){
+  chosen_ns = &nameservers[chosen];
+
 
   /* using sockaddr to actually send a packet, so make sure the 
    * port is set
@@ -420,19 +452,41 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   // await the response - not calling recvfrom, don't care who is responding
   response_size = recv(sock, response, UDP_RECV_SIZE, 0);
   if(response_size <= 0) {
-		printf("In resolve_name, recv failed\n");
-		return -1;
+		perror("In resolve_name, recv failed");
 	}
-
   // discard anything that comes in as a query instead of a response
-  if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
+  else if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
   {
     if(debug){
       printf("flags: 0x%x\n",ntohs(((struct dns_hdr *)response)->flags) & 0x8000);
       printf("received a query while expecting a response\n");
     }
   }
+  else if (response_size > 0 && 
+			ntohs(((struct dns_hdr *)response)->id) != ntohs(((struct dns_hdr *)request)->id) )
+  {
+	if(debug){
+		cout << "Returned reponse id doesn't match" << endl;
+	}
+  }
+  else break;
+	
+	retries--;
+	if(debug) cout << "Retries left: " << retries << endl;
+}//while
+
+
   if(debug) printf("response size: %d\n",response_size);
+  if(retries > 0) break;
+
+  if(debug) cout << " @@@@@@@ Attempting on another server " << endl;
+
+}//for(c=0..
+
+  if(c >= nameserver_count){
+	  if(debug) cout << "Tried all servers, all failed" << endl;
+		return build_SERVFAIL(request,response);
+	}
 
   // parse the response to get our answer
   struct dns_hdr * header = (struct dns_hdr *) response;
@@ -461,7 +515,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
   if(answer_count+auth_count+other_count>50){
     printf("ERROR: got a corrupt packet\n");
-    return -1;
+    return build_SERVFAIL(request,response);
   }
 
   /*
@@ -550,56 +604,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
 	  break; //CNAME rr is an answer, ignore other rr
 	  }//if(a<answer_count)
-//
-//	  //Temp buffers
-//      uint8_t new_request[UDP_RECV_SIZE];      
-//	  uint8_t new_response[UDP_RECV_SIZE];
-//
-//      //build the new request in temp buffer
-//	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
-//
-//	  //Resolve the new name request, store it in temp buffer
-//	  new_packet_size = resolve_name(sock, new_request,	
-//									 new_packet_size, new_response, 
-//									 root_servers, root_server_count);
-//	
-//		if(new_packet_size < 0) {
-//			perror("Error trying to resolve cname");
-//			return response_size;
-//		}
-//
-//		/** Append answer rr's at the end of current response **/
-//		uint8_t *append = answer_ptr + ns_len;
-//				
-//		answer_rr ans_section[20];
-//
-//		//extract_answer(new_response,temp_name,&new_rr,value);
-//		int amt = extract_answer(new_response,ans_section);
-//
-//		header->q_count = htons(1);
-//		header->a_count = htons(amt+1);
-//		header->auth_count = htons(0);
-//		header->other_count = htons(0);
-//
-//		int total = 0;		
-//		int j;
-//		for(j=0;j<amt;j++){
-//			int bytes;
-//			bytes = add_rr(append,&ans_section[j]);
-//			append += bytes;
-//			total += bytes;
-//		}
-//
-//		response_size = sizeof(struct dns_hdr) 
-//						+ query_len + sizeof(struct dns_query_section) //assuming 1 query 
-//						+ dnsnamelen + sizeof(struct dns_rr) + ns_len  //assuming 1 cname is first
-//						+ total;
-//	
-//		//Pickup from wireshark	
-//		if(debug) {
-//			sendto(sock, response, response_size, 0, 
-//				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
-//		}
 	
     }
     // SOA record
@@ -653,9 +657,13 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		else if(recd_ns_count > 0){ //Unglued record
 			int c=0;
 			int new_packet_size=0;
-			do{
+
 			uint8_t new_request[UDP_RECV_SIZE];      
 			uint8_t new_response[UDP_RECV_SIZE];
+			
+			int total =0;
+			sss ns[100];	
+			answer_rr ans_section[20];
 
 			do{
 				if(debug) printf("Trying to resolve nonglue record\n");
@@ -664,51 +672,49 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 				//Resolve the new name request, store it in temp buffer
 				new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
 
-				c++;
-				if(new_packet_size < 0)
+				if(check_SERVFAIL(new_response))
 					perror("Error trying to resolve unglued nameserver");
+				else{
+					int amt = extract_answer(new_response,ans_section);
+					
+					if(amt <= 0){
+						printf("Unglued: Error trying to extract answer\n");
+					}
+					else{
+					int j;
+					for(j=0;j<amt;j++){
+						if(htons(ans_section[j].rr.type)==RECTYPE_A) {
+							((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
+							((struct sockaddr_in*)&ns[total])->sin_addr = 
+										*((struct in_addr *)ans_section[j].value);
+						}
+						else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
+							((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
+							((struct sockaddr_in6*)&ns[total])->sin6_addr = 
+									*((struct in6_addr *)ans_section[j].value);
+						}
+						else continue;
+						total++; 
+					}
+					}//else
+				}
 
-			} while(new_packet_size<=0 && c < recd_ns_count); 
+				c++;
+			} while(c < recd_ns_count); 
 		
 			//Tried resolving all non-glued name servers, none succeeded
-			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
-
-			if(debug) printf("Resolved a nonglue record, now continuing recursive search\n");
-			sss ns[20];	
-			answer_rr ans_section[20];
-	
-			int amt = extract_answer(new_response,ans_section);
-			
-			if(amt <= 0){
-				printf("Error trying to extract answer\n");
-				exit(1);
+			if(total<=0) {
+				if(debug) cout << "In unglued : ERROR : no name server could be resolved" << endl;
+				return build_SERVFAIL(request,response);
 			}
 
-			int total = 0;
-			int j;
-			for(j=0;j<amt;j++){
-				if(htons(ans_section[j].rr.type)==RECTYPE_A) {
-					((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
-					((struct sockaddr_in*)&ns[total])->sin_addr = *((struct in_addr *)ans_section[j].value);
-				}
-				else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
-					((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
-					((struct sockaddr_in6*)&ns[total])->sin6_addr = *((struct in6_addr *)ans_section[j].value);
-				}
-				else continue;
-				total++; 
-			}
+			if(debug) printf("Resolved a nonglue record, now continuing recursive search with ns total: %d\n", total);
 
-			new_packet_size = resolve_name(sock,request,packet_size,response,ns,total);
-			} while(new_packet_size<=0 && c <recd_ns_count);
-
-			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
-
-			return new_packet_size;
+			return resolve_name(sock,request,packet_size,response,ns,total);
 		}
 		else{
 		;	
-		}//Error no answers and no NS given
+		}//Error no answers and no NS given, return NXDOMAIN
 
   }
 
@@ -725,14 +731,19 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 									 new_packet_size, new_response, 
 									 root_servers, root_server_count);
 	
-		if(new_packet_size < 0) {
+		if(check_SERVFAIL(new_response)) {
 			perror("Error trying to resolve cname");
-			return response_size;
+			return build_SERVFAIL(request,response);
 		}
 				
 		answer_rr ans_section[20];
 
 		int amt = extract_answer(new_response,ans_section);
+
+		if(amt <= 0){
+			if(debug) cout << "CNAME : ERROR : no answers to extract" << endl;
+			return build_SERVFAIL(request,response);
+		}
 
 		header->q_count = htons(1);
 		header->a_count = htons(amt+1);
