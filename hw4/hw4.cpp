@@ -10,31 +10,20 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <iostream>
 #include "dns.h"
+#include "hw4.h"
 
-
-typedef struct addrinfo saddrinfo;
-typedef struct sockaddr_storage sss;
+using namespace std;
 int root_server_count;
 sss root_servers[255];
 static int debug=0;
 
-#define BUFSIZE 500
-struct cache{
-	char hostname[BUFSIZE];
-	uint16_t type;
-	uint8_t response[UDP_RECV_SIZE];
-	int resp_sz;
-	time_t TTL;
-	time_t timestamp;
-	struct cache *next;
-};
-
-struct cache *head = NULL;
+cache *head = NULL;
 
 void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, time_t TTL){
-		struct cache *ptr = head;
-		struct cache *prev = NULL;
+		cache *ptr = head;
+		cache *prev = NULL;
 
 		int add = 1;
 
@@ -51,7 +40,7 @@ void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, ti
 		}
 			
 		if(add){
-			struct cache *newCache = malloc(sizeof(struct cache));
+			cache *newCache = (cache *)malloc(sizeof(cache));
 			strcpy(newCache->hostname,hostname);
 			newCache->type = type;
 			memcpy(newCache->response,response,resp_sz);
@@ -80,15 +69,13 @@ int check_cache(uint8_t *request, uint8_t *response){
 		uint16_t type = ntohs(query_end->type);
 
 		int sz = 0;
-		struct cache *ptr = head;
-		struct cache *prev = NULL;
+		cache *ptr = head;
+		cache *prev = NULL;
 		
 		while(ptr != NULL){
 			if(strcmp(ptr->hostname,name) == 0 && ptr->type == type){
 				time_t now = time(NULL);
-				if(debug) printf("%s in cache: Time now: %d, time in ptr->timestamp: %d\n",name,(unsigned)now,(unsigned)ptr->timestamp);
 				if(ptr->timestamp > now){ //not expired
-
 					if(debug) printf("Cache hit on %s\n", name);
 					
 					sz = ptr->resp_sz;
@@ -101,13 +88,15 @@ int check_cache(uint8_t *request, uint8_t *response){
 				else{ //expired so erase it
 					if(debug) printf("%s in cache, but expired TTL\n", name);
 
-					struct cache *temp = ptr->next;
+					cache *temp = ptr->next;
+				
 					free(ptr);
 
 					if(prev != NULL) prev->next = temp;
 					else head = temp;
 
 				}
+				break;
 			}
 				
 			prev = ptr;
@@ -117,9 +106,8 @@ int check_cache(uint8_t *request, uint8_t *response){
 		return sz;
 }
 
-
 void set_timestamps(){
-		struct cache *ptr = head;
+		cache *ptr = head;
 		
 		while(ptr != NULL){
 			if(ptr->timestamp == 0){
@@ -129,18 +117,10 @@ void set_timestamps(){
 		}
 }
 
-int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
-
 void usage() {
   printf("Usage: hw4 [-d] [-p port]\n\t-d: debug\n\t-p: port\n");
   exit(1);
 }
-
-typedef struct {
-	char name[BUFSIZE];
-	struct dns_rr rr;
-	uint8_t value[BUFSIZE];
-} answer_rr;	
 
 int add_rr(uint8_t *dst, answer_rr *record){
 	int bytes = to_dns_style(record->name,dst);
@@ -173,7 +153,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     printf("****** In extract answer *********\n");
   // if we didn't get an answer, just quit
   if (answer_count == 0 ){
-	printf("Error in extract_answer, no answers\n");
+	printf("~~In Extract Answer: ERROR! No Answers\n");
     return 0;
   }
 
@@ -187,10 +167,10 @@ int extract_answer(uint8_t * response, answer_rr *result){
   }
 
   if(debug)
-    printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
+    printf("~~In Extract Answer: Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
 
   if(answer_count+auth_count+other_count>50){
-    printf("ERROR: got a corrupt packet\n");
+    printf("~~In Extract Answer: ERROR! Got a corrupt packet\n");
     return -1;
   }
 
@@ -213,7 +193,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     if(htons(rr->type)==RECTYPE_A)
     {
       if(debug)
-        printf("~~In Exract Answer: The name %s resolves to IP addr: %s\n",
+        printf("~~In Exract Answer: A : The name %s resolves to IP addr: %s\n",
             string_name,
             inet_ntoa(*((struct in_addr *)answer_ptr)));
       //if it's in the answer section, then we got our answer
@@ -231,12 +211,16 @@ int extract_answer(uint8_t * response, answer_rr *result){
       char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
       if(debug)
-        printf("The name %s is also known as %s.\n",				
+        printf("~~In Extract Answer: CNAME : The name %s is also known as %s.\n",				
             string_name, ns_string);
+
+		char no_compress[BUFSIZE];
+		int no_comp_len = to_dns_style(ns_string,(uint8_t*)no_compress);
 
 		strcpy(result[a].name,string_name);
 		result[a].rr = *rr;
-		memcpy(result[a].value,answer_ptr,ntohs(rr->datalen));
+		result[a].rr.datalen = htons(no_comp_len);
+		memcpy(result[a].value,no_compress,no_comp_len);
     }
     // AAAA record
     else if(htons(rr->type)==RECTYPE_AAAA)	
@@ -244,7 +228,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
       if(debug)
       {
         char printbuf[INET6_ADDRSTRLEN];	
-        printf("~~In Exract Answer: The name %s resolves to IP addr: %s\n",
+        printf("~~In Exract Answer: AAAA : The name %s resolves to IP addr: %s\n",
             string_name,
             inet_ntop(AF_INET6, answer_ptr, printbuf,INET6_ADDRSTRLEN));
       }
@@ -256,7 +240,7 @@ int extract_answer(uint8_t * response, answer_rr *result){
     else
     {
       if(debug)
-        printf("got unknown record type %hu\n", htons(rr->type));
+        printf("~~In Extract Answer: Got unknown record type %hu\n", htons(rr->type));
     }
     answer_ptr+=htons(rr->datalen);
   }
@@ -296,7 +280,7 @@ int ss_pton(const char * src, void * dst){
     char printbuf[INET6_ADDRSTRLEN];
     struct sockaddr_in6 * out = (struct sockaddr_in6*)dst;
     // for socket purposes, we need a v4-mapped ipv6 address
-    unsigned char * mapped_dst = (void*)&out->sin6_addr;
+    unsigned char * mapped_dst = (unsigned char*)&out->sin6_addr;
     // take the first 4 bytes of buf and put them in the last 4
     // of the return value
     memcpy(mapped_dst+12,buf,4);
@@ -327,8 +311,6 @@ void read_server_file() {
     ss_pton(addr,&root_servers[root_server_count++]);
   }
 }
-
-
 
 /* constructs a DNS query message for the provided hostname */
 int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
@@ -370,12 +352,35 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
   }
   query_len+=2;
   //finally the class: INET
-  uint16_t *class = (uint16_t*)(query+query_len);
-  *class = htons(1);
+  uint16_t *iclass = (uint16_t*)(query+query_len);
+  *iclass = htons(1);
   query_len += 2;
   return query_len;	
 }
 
+
+bool check_SERVFAIL(uint8_t *response){
+	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
+	
+	uint16_t rcode = ntohs(resp_hdr->flags & htons(0x000F));
+
+	return rcode == 0x2;
+}
+int build_SERVFAIL(uint8_t *request, uint8_t *response){
+	struct dns_hdr *req_hdr = (struct dns_hdr*)request;
+	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
+
+	*resp_hdr = *req_hdr;
+
+	resp_hdr->flags =  htons(0x0);	
+	resp_hdr->flags =  resp_hdr->flags | htons(0x0002);	
+	resp_hdr->q_count = htons(0);
+	resp_hdr->a_count = htons(0);
+	resp_hdr->auth_count = htons(0);
+	resp_hdr->other_count = htons(0);
+
+	return sizeof(dns_hdr);
+}
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
   int psize = check_cache(request,response);
@@ -383,6 +388,13 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
   //Assume that we're getting no more than 20 NS responses
   char recd_ns_name[20][BUFSIZE];
+
+  char cname[20][BUFSIZE]; //ns_name
+  int cname_count = 0;
+  int to_cname_bytes =0; //number of bytes before appending the reslution of cname
+  uint8_t *cname_append; //Pointer to where to append the resolution of cname
+  bool resolve_cname = false; //Is there a cname to resolve?
+
   sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
@@ -390,18 +402,26 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   // if an entry in recd_ns_ips is 0.0.0.0, we treat it as unassigned
   memset(recd_ns_ips,0,sizeof(recd_ns_ips));
   memset(recd_ns_name,0,20*BUFSIZE);
-  int retries = 5;
+  int retries = 3;
   
   if(debug)
     printf("resolve name called with packet size %d\n",packet_size);
 
-  int chosen = random()%nameserver_count;
-  sss *chosen_ns = &nameservers[chosen];
+	int c;
+	sss *chosen_ns;
 
+  for(c=0;c<nameserver_count;c++){
+ // int chosen = random()%nameserver_count;
+  int chosen = c;
+  retries = 3;
   if(debug)
   {
     printf("\nAsking for record using server %d out of %d\n",chosen+1, nameserver_count);
   }
+
+  while(retries > 0){
+  chosen_ns = &nameservers[chosen];
+
 
   /* using sockaddr to actually send a packet, so make sure the 
    * port is set
@@ -432,19 +452,41 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   // await the response - not calling recvfrom, don't care who is responding
   response_size = recv(sock, response, UDP_RECV_SIZE, 0);
   if(response_size <= 0) {
-		printf("In resolve_name, recv failed\n");
-		return -1;
+		perror("In resolve_name, recv failed");
 	}
-
   // discard anything that comes in as a query instead of a response
-  if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
+  else if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
   {
     if(debug){
       printf("flags: 0x%x\n",ntohs(((struct dns_hdr *)response)->flags) & 0x8000);
       printf("received a query while expecting a response\n");
     }
   }
+  else if (response_size > 0 && 
+			ntohs(((struct dns_hdr *)response)->id) != ntohs(((struct dns_hdr *)request)->id) )
+  {
+	if(debug){
+		cout << "Returned reponse id doesn't match" << endl;
+	}
+  }
+  else break;
+	
+	retries--;
+	if(debug) cout << "Retries left: " << retries << endl;
+}//while
+
+
   if(debug) printf("response size: %d\n",response_size);
+  if(retries > 0) break;
+
+  if(debug) cout << " @@@@@@@ Attempting on another server " << endl;
+
+}//for(c=0..
+
+  if(c >= nameserver_count){
+	  if(debug) cout << "Tried all servers, all failed" << endl;
+		return build_SERVFAIL(request,response);
+	}
 
   // parse the response to get our answer
   struct dns_hdr * header = (struct dns_hdr *) response;
@@ -466,12 +508,14 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     answer_ptr+=size;
     answer_ptr+=4; //jump over 2 bytes type and 2 bytes class
   }
-
+  
+  to_cname_bytes = sizeof(struct dns_hdr) 
+						+ query_len + sizeof(struct dns_query_section);
   if(debug)
     printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
   if(answer_count+auth_count+other_count>50){
     printf("ERROR: got a corrupt packet\n");
-    return -1;
+    return build_SERVFAIL(request,response);
   }
 
   /*
@@ -497,6 +541,14 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
 		if(debug)
 			printf("Added cache %s with TTL of %d\n", string_name, (unsigned)(ntohl(rr->ttl)));
+
+		//Does this A record resolve a cname already seen?
+		//Have cname branch not break
+		for(int i=0;i<cname_count;i++){
+			if(strcmp(string_name,(char*)&cname[i]) == 0){
+				resolve_cname = false;
+			}
+		}
 	  }
 	  int i;
 	  //Only loop if we saw NS records, this means we stored hostnames
@@ -531,69 +583,28 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     }
     //CNAME record
     else if(htons(rr->type)==RECTYPE_CNAME)
-    {
+	{    
 	  //CNAME
       char ns_string[BUFSIZE];
       int ns_len=from_dns_style(response,answer_ptr,ns_string);
 
       if(debug)
-        printf("CNAME: The name %s is also known as %s.\n",				
+        printf("In resolve_name : CNAME: The name %s is also known as %s.\n",				
             string_name, ns_string);
 
 	 if(a<answer_count){
 
-	  //Temp buffers
-      uint8_t new_request[UDP_RECV_SIZE];      
-	  uint8_t new_response[UDP_RECV_SIZE];
+	  strcpy((char*)&cname[cname_count],ns_string);
+      to_cname_bytes += dnsnamelen + sizeof(struct dns_rr) + ns_len; //assuming 1 cname is first
 
-      //build the new request in temp buffer
-	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,ns_string,RECTYPE_A);
+	  cname_append = answer_ptr + ns_len;
 
-	  //Resolve the new name request, store it in temp buffer
-	  new_packet_size = resolve_name(sock, new_request,	
-									 new_packet_size, new_response, 
-									 root_servers, root_server_count);
+	  resolve_cname = true;
+	  cname_count++;
+
+	  break; //CNAME rr is an answer, ignore other rr
+	  }//if(a<answer_count)
 	
-		if(new_packet_size < 0) {
-			perror("Error trying to resolve cname");
-			continue;
-		}
-
-		/** Append answer rr's at the end of current response **/
-		uint8_t *append = answer_ptr + ns_len;
-				
-		answer_rr ans_section[20];
-
-		//extract_answer(new_response,temp_name,&new_rr,value);
-		int amt = extract_answer(new_response,ans_section);
-
-		header->q_count = htons(1);
-		header->a_count = htons(amt+1);
-		header->auth_count = htons(0);
-		header->other_count = htons(0);
-
-		int total = 0;		
-		int j;
-		for(j=0;j<amt;j++){
-			int bytes;
-			bytes = add_rr(append,&ans_section[j]);
-			append += bytes;
-			total += bytes;
-		}
-
-		response_size = sizeof(struct dns_hdr) 
-						+ query_len + sizeof(struct dns_query_section) //assuming 1 query 
-						+ dnsnamelen + sizeof(struct dns_rr) + ns_len  //assuming 1 cname is first
-						+ total;
-	
-		//Pickup from wireshark	
-		if(debug) {
-			sendto(sock, response, response_size, 0, 
-				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
-		}
-	
-		break; //CNAME rr is an answer, ignore other rr
-		}//if(a<answer_count)
     }
     // SOA record
     else if(htons(rr->type)==RECTYPE_SOA)
@@ -636,6 +647,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
       if(debug)
         printf("got unknown record type %hu\n", htons(rr->type));
     }
+
     answer_ptr+=htons(rr->datalen);
   }
 
@@ -645,9 +657,13 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		else if(recd_ns_count > 0){ //Unglued record
 			int c=0;
 			int new_packet_size=0;
-			do{
+
 			uint8_t new_request[UDP_RECV_SIZE];      
 			uint8_t new_response[UDP_RECV_SIZE];
+			
+			int total =0;
+			sss ns[100];	
+			answer_rr ans_section[20];
 
 			do{
 				if(debug) printf("Trying to resolve nonglue record\n");
@@ -656,51 +672,99 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 				//Resolve the new name request, store it in temp buffer
 				new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
 
-				c++;
-				if(new_packet_size < 0)
+				if(check_SERVFAIL(new_response))
 					perror("Error trying to resolve unglued nameserver");
+				else{
+					int amt = extract_answer(new_response,ans_section);
+					
+					if(amt <= 0){
+						printf("Unglued: Error trying to extract answer\n");
+					}
+					else{
+					int j;
+					for(j=0;j<amt;j++){
+						if(htons(ans_section[j].rr.type)==RECTYPE_A) {
+							((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
+							((struct sockaddr_in*)&ns[total])->sin_addr = 
+										*((struct in_addr *)ans_section[j].value);
+						}
+						else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
+							((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
+							((struct sockaddr_in6*)&ns[total])->sin6_addr = 
+									*((struct in6_addr *)ans_section[j].value);
+						}
+						else continue;
+						total++; 
+					}
+					}//else
+				}
 
-			} while(new_packet_size<=0 && c < recd_ns_count); 
+				c++;
+			} while(c < recd_ns_count); 
 		
 			//Tried resolving all non-glued name servers, none succeeded
-			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
-
-			if(debug) printf("Resolved a nonglue record, now continuing recursive search\n");
-			sss ns[20];	
-			answer_rr ans_section[20];
-	
-			int amt = extract_answer(new_response,ans_section);
-			
-			if(amt <= 0){
-				printf("Error trying to extract answer\n");
-				exit(1);
+			if(total<=0) {
+				if(debug) cout << "In unglued : ERROR : no name server could be resolved" << endl;
+				return build_SERVFAIL(request,response);
 			}
 
-			int total = 0;
-			int j;
-			for(j=0;j<amt;j++){
-				if(htons(ans_section[j].rr.type)==RECTYPE_A) {
-					((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
-					((struct sockaddr_in*)&ns[total])->sin_addr = *((struct in_addr *)ans_section[j].value);
-				}
-				else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
-					((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
-					((struct sockaddr_in6*)&ns[total])->sin6_addr = *((struct in6_addr *)ans_section[j].value);
-				}
-				else continue;
-				total++; 
-			}
+			if(debug) printf("Resolved a nonglue record, now continuing recursive search with ns total: %d\n", total);
 
-			new_packet_size = resolve_name(sock,request,packet_size,response,ns,total);
-			} while(new_packet_size<=0 && c <recd_ns_count);
-
-			if(new_packet_size <= 0 && c>=recd_ns_count) return response_size;
-
-			return new_packet_size;
+			return resolve_name(sock,request,packet_size,response,ns,total);
 		}
 		else{
 		;	
-		}//Error no answers and no NS given
+		}//Error no answers and no NS given, return NXDOMAIN
+
+  }
+
+  if(cname_count > 0 && resolve_cname){
+	  //Temp buffers
+      uint8_t new_request[UDP_RECV_SIZE];      
+	  uint8_t new_response[UDP_RECV_SIZE];
+
+      //build the new request in temp buffer
+	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,(char*)&cname[cname_count-1],RECTYPE_A);
+
+	  //Resolve the new name request, store it in temp buffer
+	  new_packet_size = resolve_name(sock, new_request,	
+									 new_packet_size, new_response, 
+									 root_servers, root_server_count);
+	
+		if(check_SERVFAIL(new_response)) {
+			perror("Error trying to resolve cname");
+			return build_SERVFAIL(request,response);
+		}
+				
+		answer_rr ans_section[20];
+
+		int amt = extract_answer(new_response,ans_section);
+
+		if(amt <= 0){
+			if(debug) cout << "CNAME : ERROR : no answers to extract" << endl;
+			return build_SERVFAIL(request,response);
+		}
+
+		header->q_count = htons(1);
+		header->a_count = htons(amt+1);
+		header->auth_count = htons(0);
+		header->other_count = htons(0);
+
+		int total = 0;		
+		for(int j=0;j<amt;j++){
+			int bytes;
+			bytes = add_rr(cname_append,&ans_section[j]);
+			cname_append += bytes;
+			total += bytes;
+		}
+
+		response_size = to_cname_bytes + total;
+	
+		//Pickup from wireshark	
+		if(debug) {
+			sendto(sock, response, response_size, 0, 
+				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
+		}
 
   }
 
@@ -717,7 +781,7 @@ int main(int argc, char ** argv){
   struct dns_hdr * header=NULL;
   char * question_domain=NULL;
   char client_ip[INET6_ADDRSTRLEN];
-  char *optString = "dp";
+  char *optString = (char *)"dp";
   struct timeval timeout;
   
   int opt = getopt(argc, argv, optString);

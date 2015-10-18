@@ -1,6 +1,6 @@
 TARGETS=hw4
-hw4: hw4.c
-	gcc -g --std=gnu99 -o hw4 hw4.c 
+hw4: hw4.cpp
+	g++ -std=c++11 -o hw4 hw4.cpp
 
 all: $(TARGETS)
 

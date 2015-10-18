@@ -33,13 +33,13 @@ struct dns_hdr {
 
 struct dns_query_section {
 	uint16_t type;
-	uint16_t class;
+	uint16_t iclass;
 } __attribute__((packed));
 
 struct dns_rr {
 	// first a variable sized name, then
 	uint16_t type;
-	uint16_t class;
+	uint16_t iclass;
 	uint32_t ttl;
 	uint16_t datalen;
 	// and then a variable sized data field
@@ -49,7 +49,7 @@ struct dns_answer_section
 {
 	uint16_t name;
 	uint16_t type;
-	uint16_t class;
+	uint16_t iclass;
 	uint16_t ttl_top;
 	uint16_t ttl;
 	uint16_t data_len;
