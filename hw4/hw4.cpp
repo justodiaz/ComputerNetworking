@@ -49,7 +49,7 @@ void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, ti
 			newCache->timestamp = 0; //To be found after resolved
 			newCache->next = NULL;
 			
-			if(debug) printf("Added cache with TTL of %d\n",(unsigned)newCache->TTL);
+			if(debug) printf("Added %s to cache with TTL of %d\n",hostname,(unsigned)newCache->TTL);
 
 			if(prev == NULL) head = newCache;
 			else prev->next = newCache;
@@ -58,7 +58,6 @@ void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, ti
 
 
 int check_cache(uint8_t *request, uint8_t *response){
-
 		struct dns_hdr *req_hdr = (struct dns_hdr*)request;
 		uint8_t *req_name = request + sizeof(struct dns_hdr);
 		char name[BUFSIZE];
@@ -150,10 +149,10 @@ int extract_answer(uint8_t * response, answer_rr *result){
   int other_count = ntohs(header->other_count);
 
   if(debug)
-    printf("****** In extract answer *********\n");
+    cout << "****** In extract answer *********" << endl;
   // if we didn't get an answer, just quit
   if (answer_count == 0 ){
-	printf("~~In Extract Answer: ERROR! No Answers\n");
+	cerr << "~~In Extract Answer: ERROR! No Answers" << endl;
     return 0;
   }
 
@@ -167,11 +166,12 @@ int extract_answer(uint8_t * response, answer_rr *result){
   }
 
   if(debug)
-    printf("~~In Extract Answer: Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
+    printf("~~In Extract Answer: Got %d+%d+%d=%d resource records total.\n",
+			answer_count,auth_count,other_count,answer_count+auth_count+other_count);
 
   if(answer_count+auth_count+other_count>50){
-    printf("~~In Extract Answer: ERROR! Got a corrupt packet\n");
-    return -1;
+    printf("~~In Extract Answer : ERROR : Got a corrupt packet\n");
+    return 0;
   }
 
   /*
@@ -362,7 +362,7 @@ int construct_query(uint8_t* query, int max_query, char* hostname,int qtype) {
 bool check_SERVFAIL(uint8_t *response){
 	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
 	
-	uint16_t rcode = ntohs(resp_hdr->flags & htons(0x000F));
+	uint16_t rcode = ntohs(resp_hdr->flags) & 0x000F;
 
 	return rcode == 0x2;
 }
@@ -371,23 +371,45 @@ int build_SERVFAIL(uint8_t *request, uint8_t *response){
 	struct dns_hdr *resp_hdr = (struct dns_hdr*)response;
 
 	*resp_hdr = *req_hdr;
+	int q_count = ntohs(req_hdr->q_count);
+	
+	uint8_t* resp_query = response + sizeof(struct dns_hdr);
+	uint8_t* query = request + sizeof(struct dns_hdr);
 
+	char buf[BUFSIZE];
+	int total = 0;
+	for(int i=0;i<q_count;i++){
+	
+		int bytes;
+		struct dns_query_section qfoot;
+
+		bytes = from_dns_style(request,query,buf);
+		query += bytes;
+		qfoot = *((struct dns_query_section *)query);
+		query += sizeof(struct dns_query_section);
+	
+		bytes = to_dns_style(buf,resp_query);
+		resp_query += bytes;
+		*((struct dns_query_section *)resp_query) = qfoot;
+		resp_query += sizeof(struct dns_query_section);
+
+		total += bytes;
+		
+	}
+	
 	resp_hdr->flags =  htons(0x0);	
-	resp_hdr->flags =  resp_hdr->flags | htons(0x0002);	
-	resp_hdr->q_count = htons(0);
+	resp_hdr->flags =  resp_hdr->flags | htons(0x0002) | htons(0x8000);	
+	resp_hdr->q_count = htons(q_count);
 	resp_hdr->a_count = htons(0);
 	resp_hdr->auth_count = htons(0);
 	resp_hdr->other_count = htons(0);
 
-	return sizeof(dns_hdr);
+	return sizeof(dns_hdr) + total + (q_count * sizeof(struct dns_query_section));
 }
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
   int psize = check_cache(request,response);
   if(psize > 0) return psize;
-
-  //Assume that we're getting no more than 20 NS responses
-  char recd_ns_name[20][BUFSIZE];
 
   char cname[20][BUFSIZE]; //ns_name
   int cname_count = 0;
@@ -395,6 +417,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   uint8_t *cname_append; //Pointer to where to append the resolution of cname
   bool resolve_cname = false; //Is there a cname to resolve?
 
+  //Assume that we're getting no more than 20 NS responses
+  char recd_ns_name[20][BUFSIZE];
   sss recd_ns_ips[20];
   int recd_ns_count = 0;
   int recd_ip_count = 0; // additional records
@@ -405,7 +429,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
   int retries = 3;
   
   if(debug)
-    printf("resolve name called with packet size %d\n",packet_size);
+    printf("resolve_name() called with packet size %d\n",packet_size);
 
 	int c;
 	sss *chosen_ns;
@@ -414,15 +438,12 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
  // int chosen = random()%nameserver_count;
   int chosen = c;
   retries = 3;
+
   if(debug)
-  {
     printf("\nAsking for record using server %d out of %d\n",chosen+1, nameserver_count);
-  }
 
   while(retries > 0){
   chosen_ns = &nameservers[chosen];
-
-
   /* using sockaddr to actually send a packet, so make sure the 
    * port is set
    */
@@ -451,26 +472,45 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
   // await the response - not calling recvfrom, don't care who is responding
   response_size = recv(sock, response, UDP_RECV_SIZE, 0);
-  if(response_size <= 0) {
+
+  bool recvgood = true;
+  if(response_size < (int)sizeof(dns_hdr)) {
 		perror("In resolve_name, recv failed");
+		recvgood = false;
 	}
   // discard anything that comes in as a query instead of a response
-  else if ((response_size > 0) && ((ntohs(((struct dns_hdr *)response)->flags) & 0x8000) == 0))
+  else
   {
-    if(debug){
-      printf("flags: 0x%x\n",ntohs(((struct dns_hdr *)response)->flags) & 0x8000);
-      printf("received a query while expecting a response\n");
-    }
+	  struct dns_hdr * header = (struct dns_hdr *) response;
+
+	  int question_count = ntohs(header->q_count);
+	  int answer_count = ntohs(header->a_count);
+	  int auth_count = ntohs(header->auth_count);
+	  int other_count = ntohs(header->other_count);
+
+	  if((ntohs(header->flags) & 0x8000) == 0){
+		  printf("flags: 0x%x\n",ntohs(((struct dns_hdr *)response)->flags) & 0x8000);
+		  cerr << "Recv : ERROR : Received a query while expecting a response" << endl;
+		  recvgood = false;
+	  }
+	  // 0x0 is NOERROR and 0x3 is NXDOMAIN
+	  else if((ntohs(header->flags) & 0x000F) != 0x0 && (ntohs(header->flags) & 0x000F) != 0x3)
+	  {
+			cerr << "Recv : ERROR : Message reports error" << endl;
+			recvgood = false;
+	  }
+	  else if(ntohs(header->id) != ntohs(((struct dns_hdr *)request)->id)){
+		cerr << "Recv : ERROR : Returned reponse id doesn't match" << endl;
+		recvgood = false;
+	  }
+	  else if(answer_count+auth_count+other_count>50){
+		cerr << "Recv : ERROR: got a corrupt packet" << endl;
+		recvgood = false;
+	  }
   }
-  else if (response_size > 0 && 
-			ntohs(((struct dns_hdr *)response)->id) != ntohs(((struct dns_hdr *)request)->id) )
-  {
-	if(debug){
-		cout << "Returned reponse id doesn't match" << endl;
-	}
-  }
-  else break;
-	
+
+	if(recvgood) break;
+
 	retries--;
 	if(debug) cout << "Retries left: " << retries << endl;
 }//while
@@ -484,7 +524,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 }//for(c=0..
 
   if(c >= nameserver_count){
-	  if(debug) cout << "Tried all servers, all failed" << endl;
+	  if(debug) cerr << "Tried all nameservers failed, returing SERVFAIL" << endl;
 		return build_SERVFAIL(request,response);
 	}
 
@@ -513,11 +553,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 						+ query_len + sizeof(struct dns_query_section);
   if(debug)
     printf("Got %d+%d+%d=%d resource records total.\n",answer_count,auth_count,other_count,answer_count+auth_count+other_count);
-  if(answer_count+auth_count+other_count>50){
-    printf("ERROR: got a corrupt packet\n");
-    return build_SERVFAIL(request,response);
-  }
-
   /*
    * iterate through answer, authoritative, and additional records
    */
@@ -538,9 +573,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
       //An A record in the answer section, add response to cache
 	  if(a<answer_count){
 		add_cache(string_name, ntohs(rr->type),response, response_size, ntohl(rr->ttl));
-
-		if(debug)
-			printf("Added cache %s with TTL of %d\n", string_name, (unsigned)(ntohl(rr->ttl)));
 
 		//Does this A record resolve a cname already seen?
 		//Have cname branch not break
@@ -655,47 +687,48 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		if(recd_ip_count >0) //We have more name servers to contact
 			return resolve_name(sock,request,packet_size,response,recd_ns_ips,recd_ip_count);
 		else if(recd_ns_count > 0){ //Unglued record
-			int c=0;
 			int new_packet_size=0;
 
 			uint8_t new_request[UDP_RECV_SIZE];      
 			uint8_t new_response[UDP_RECV_SIZE];
 			
-			int total =0;
+			int total =0; //ns array count
 			sss ns[100];	
 			answer_rr ans_section[20];
 
+			int c=0;
 			do{
-				if(debug) printf("Trying to resolve nonglue record\n");
+				if(debug) cout << "Attempting to resolve unglued record" << endl;
 				//build the new request in temp buffer
-				new_packet_size = construct_query(new_request,UDP_RECV_SIZE,recd_ns_name[c],RECTYPE_A);
+				new_packet_size = construct_query(new_request,UDP_RECV_SIZE,
+													recd_ns_name[c],RECTYPE_A);
 				//Resolve the new name request, store it in temp buffer
-				new_packet_size = resolve_name(sock, new_request, new_packet_size, new_response, root_servers, root_server_count);
+				new_packet_size = resolve_name(sock, new_request, 
+												new_packet_size, new_response, 
+												root_servers, root_server_count);
 
 				if(check_SERVFAIL(new_response))
-					perror("Error trying to resolve unglued nameserver");
+					cerr << "Unglued : ERROR : Trying to resolve unglued nameserver" << endl;
 				else{
 					int amt = extract_answer(new_response,ans_section);
 					
-					if(amt <= 0){
-						printf("Unglued: Error trying to extract answer\n");
-					}
+					if(amt <= 0)
+						cerr << "Unglued : ERROR : No answers extracted" << endl;
 					else{
-					int j;
-					for(j=0;j<amt;j++){
-						if(htons(ans_section[j].rr.type)==RECTYPE_A) {
-							((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
-							((struct sockaddr_in*)&ns[total])->sin_addr = 
-										*((struct in_addr *)ans_section[j].value);
+						for(int j=0;j<amt;j++){
+							if(htons(ans_section[j].rr.type)==RECTYPE_A) {
+								((struct sockaddr_in*)&ns[total])->sin_family = AF_INET;
+								((struct sockaddr_in*)&ns[total])->sin_addr = 
+											*((struct in_addr *)ans_section[j].value);
+							}
+							else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
+								((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
+								((struct sockaddr_in6*)&ns[total])->sin6_addr = 
+										*((struct in6_addr *)ans_section[j].value);
+							}
+							else continue;
+							total++; 
 						}
-						else if(htons(ans_section[j].rr.type)==RECTYPE_AAAA){
-							((struct sockaddr_in6*)&ns[total])->sin6_family = AF_INET6;
-							((struct sockaddr_in6*)&ns[total])->sin6_addr = 
-									*((struct in6_addr *)ans_section[j].value);
-						}
-						else continue;
-						total++; 
-					}
 					}//else
 				}
 
@@ -704,17 +737,24 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		
 			//Tried resolving all non-glued name servers, none succeeded
 			if(total<=0) {
-				if(debug) cout << "In unglued : ERROR : no name server could be resolved" << endl;
+				cerr << "Unglued : ERROR : No name server could be resolved" << endl;
 				return build_SERVFAIL(request,response);
 			}
 
-			if(debug) printf("Resolved a nonglue record, now continuing recursive search with ns total: %d\n", total);
+			if(debug) cout << "Resolved a nonglue record, NS total: " << total << endl;
 
 			return resolve_name(sock,request,packet_size,response,ns,total);
 		}
 		else{
-		;	
-		}//Error no answers and no NS given, return NXDOMAIN
+			if((ntohs(header->flags) & 0x000F) == 0x3){ 
+				if (debug) cout << "Returning NXDOMAIN" << endl;	
+				return response_size;
+			}
+			else {
+				if(debug) cout << "Wrongly formated request" << endl;
+				return build_SERVFAIL(request,response);
+			}
+		}
 
   }
 
@@ -724,7 +764,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	  uint8_t new_response[UDP_RECV_SIZE];
 
       //build the new request in temp buffer
-	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,(char*)&cname[cname_count-1],RECTYPE_A);
+	  int new_packet_size = construct_query(new_request,UDP_RECV_SIZE,
+											(char*)&cname[cname_count-1],RECTYPE_A);
 
 	  //Resolve the new name request, store it in temp buffer
 	  new_packet_size = resolve_name(sock, new_request,	
@@ -732,7 +773,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 									 root_servers, root_server_count);
 	
 		if(check_SERVFAIL(new_response)) {
-			perror("Error trying to resolve cname");
+			cerr << " CNAME : ERROR : Trying to resolve cname" << endl;
 			return build_SERVFAIL(request,response);
 		}
 				
@@ -741,7 +782,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		int amt = extract_answer(new_response,ans_section);
 
 		if(amt <= 0){
-			if(debug) cout << "CNAME : ERROR : no answers to extract" << endl;
+			if(debug) cout << "CNAME : ERROR : No answers to extract" << endl;
 			return build_SERVFAIL(request,response);
 		}
 
@@ -768,10 +809,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 
   }
 
-  set_timestamps();
-
+  set_timestamps(); //Of encountered answer A records
   return response_size;
-
 }
 
 int main(int argc, char ** argv){
