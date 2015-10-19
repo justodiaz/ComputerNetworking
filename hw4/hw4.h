@@ -19,3 +19,4 @@ typedef struct {
 } answer_rr;	
 
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count);
+void update_TTL(uint8_t * response, uint32_t TTL);

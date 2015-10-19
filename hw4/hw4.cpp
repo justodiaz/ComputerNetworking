@@ -56,7 +56,6 @@ void add_cache(char *hostname, uint16_t type, uint8_t* response, int resp_sz, ti
 		}
 }
 
-
 int check_cache(uint8_t *request, uint8_t *response){
 		struct dns_hdr *req_hdr = (struct dns_hdr*)request;
 		uint8_t *req_name = request + sizeof(struct dns_hdr);
@@ -76,7 +75,9 @@ int check_cache(uint8_t *request, uint8_t *response){
 				time_t now = time(NULL);
 				if(ptr->timestamp > now){ //not expired
 					if(debug) printf("Cache hit on %s\n", name);
-					
+				
+					update_TTL(ptr->response,(uint32_t)(ptr->timestamp - now));
+	
 					sz = ptr->resp_sz;
 					memcpy(response,ptr->response,sz);
 					
@@ -114,6 +115,83 @@ void set_timestamps(){
 			}
 			ptr = ptr->next;
 		}
+}
+
+void update_TTL(uint8_t * response, uint32_t TTL){
+  // parse the response to get our answer
+  struct dns_hdr * header = (struct dns_hdr *) response;
+  uint8_t * answer_ptr = response + sizeof(struct dns_hdr);
+
+  // now answer_ptr points at the first question.
+  int question_count = ntohs(header->q_count);
+  int answer_count = ntohs(header->a_count);
+  int auth_count = ntohs(header->auth_count);
+  int other_count = ntohs(header->other_count);
+
+  if(debug)
+    cout << "**Updating TTLs with new TTL: "<< TTL << endl;
+  // if we didn't get an answer, just quit
+  if (answer_count == 0 ){
+	cerr << "~~In udpate_TTL: ERROR! No Answers" << endl;
+    return;
+  }
+
+  // skip questions
+  for(int q=0; q<question_count; q++){
+    char string_name[BUFSIZE];
+    memset(string_name,0,BUFSIZE);
+    int size=from_dns_style(response, answer_ptr,string_name);
+    answer_ptr+=size;
+    answer_ptr+=4;
+  }
+
+  if(debug)
+    printf("~~In update_TTL: Got %d+%d+%d=%d resource records total.\n",
+			answer_count,auth_count,other_count,answer_count+auth_count+other_count);
+
+  if(answer_count+auth_count+other_count>50){
+    printf("~~In update_TTL : ERROR : Got a corrupt packet\n");
+    return;
+  }
+
+  /*
+   * accumulate authoritative nameservers to a list so we can recurse through them
+   */
+  int a;
+  for(a=0; a<answer_count;a++)
+  {
+    // first the name this answer is referring to
+    char string_name[BUFSIZE];
+    int dnsnamelen=from_dns_style(response,answer_ptr,string_name);
+    answer_ptr += dnsnamelen;
+
+    // then fixed part of the RR record
+    struct dns_rr* rr = (struct dns_rr*)answer_ptr;
+    answer_ptr+=sizeof(struct dns_rr);
+
+    //A record
+    if(htons(rr->type)==RECTYPE_A)
+    {
+	    rr->ttl = htonl(TTL);
+    }
+    //CNAME record
+    else if(htons(rr->type)==RECTYPE_CNAME)
+    {
+	    rr->ttl = htonl(TTL);
+    }
+    // AAAA record
+    else if(htons(rr->type)==RECTYPE_AAAA)	
+    {
+	    rr->ttl = htonl(TTL);
+    }
+    else
+    {
+      if(debug)
+        printf("~~In Extract Answer: Got unknown record type %hu\n", htons(rr->type));
+    }
+    answer_ptr+=htons(rr->datalen);
+  }
+
 }
 
 void usage() {
