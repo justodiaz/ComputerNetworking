@@ -1,4 +1,4 @@
-Q1: 0x38affe13
+Q1: 38affe13
 Q2: AAAA;CNAME
 Q3: funny-pictures-kitten-says-hello.jpg;bb2c48239e785e892915e72907eb97af
 Q4: 192.168.0.2;192.168.0.1
@@ -8,5 +8,5 @@ Q7: /sbin/ping www.yahoo.com;ls;ls -a;exit
 Q8: edmond
 Q9: cs.uic.edu
 Q10: ls;echo Networking is supper supper interested!;ping cs.uic.edu;echo Bye!;exit
-Q11: 100;131.193.34.202;ec26434293bd9928f187bf00cb72b2af
+Q11: 131.193.34.202;100;ec26434293bd9928f187bf00cb72b2af
 Q12: awesome.pdf;051f564245e0775bbdfb525329f459fd
