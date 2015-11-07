@@ -1,8 +1,12 @@
 #include <sys/time.h>
 
+#define SYN 1;
+#define FIN 2;
+
 struct hw6_hdr {
 	uint32_t sequence_number;
 	uint32_t ack_number;
+	uint8_t flag;
 };
 
 #define MAX_PACKET 1400
