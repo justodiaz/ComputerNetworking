@@ -9,9 +9,11 @@ struct hw6_hdr {
 	uint8_t flag;
 };
 
+#define INIT_ERTT 1000 //msec, initial estimated rtt is 1 sec
 #define MAX_PACKET 1400
 #define MAX_SEGMENT (MAX_PACKET-sizeof(struct hw6_hdr))
 #define HDR_SZ (sizeof(struct hw6_hdr))
+#define diff(x,y) ((x)< (y) ? (y)-(x) : (x)-(y)) 
 
 typedef struct hw6_hdr* hdr_ptr;
 

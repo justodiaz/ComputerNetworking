@@ -11,10 +11,14 @@
 #include <iostream>
 #include <cstddef> //size_t
 #include <cstdint> //uint#_t
+#include <cerrno>
 #include "hw6.h"
 
 uint32_t sequence_number;
 uint32_t ack_number;
+uint32_t timeoutInterval; 
+uint32_t devRTT;
+uint32_t estimatedRTT;
 
 int timeval_to_msec(struct timeval *t) { 
 	return t->tv_sec*1000+t->tv_usec/1000;
@@ -74,23 +78,52 @@ void rel_send(int sock, void *buf, int len)
 
 	make_pkt(sequence_number,ack_number,buf,(size_t)len,sndpkt,MAX_PACKET);
 
+	bool timeout = false;
+	unsigned start, end, sampleRTT;
 	do{
-		send(sock, sndpkt, HDR_SZ+len, 0);
 		memset(rcvpkt, 0, MAX_PACKET);
-		//start timer
-		//unsigned start = current_msec();
-		//alarm(TimeoutInterval);
-		//should timeout if doesn't recieve ack
+
+		send(sock, sndpkt, HDR_SZ+len, 0);
+
+		start = current_msec();
+
+		struct timeval to;
+		timeoutInterval	= estimatedRTT + 4*devRTT;
+		msec_to_timeval(timeoutInterval,&to); 
+		setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&to,sizeof(to));
 		//should block until ack is received
-		recv(sock, rcvpkt, MAX_PACKET, 0);
-		//if(ret<0){ if(errno == EINTR) timeout = true; else exit(1); }
-		//unsigned end = current_msec();
+		do{
+
+			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
+			if(ret<0){
+				if(errno == EAGAIN || errno == EWOULDBLOCK ) {
+					std::cerr << "timeout" << std::endl;
+					timeout = true; 
+				}
+				else { 
+					perror("recv"); 
+					exit(1);
+				} 
+			}
+			else{ //compute sampleRTT;
+				if(isACK(rcvpkt,sequence_number)){
+				end = current_msec();
+				sampleRTT = end - start;	
+
+				estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
+				devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
+
+				std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
+				}
+			}
+		} while(!timeout && !isACK(rcvpkt,sequence_number));
+
 		//unsigned SampleRTT = end - start;
 		//DevRTT = (1-.25) * DevRTT + .25 * abs(SampleRTT - EstimatedRTT);
 		//EstimatedRTT = (1-.125) * EstimatedRTT + .125 * SampleRTT;
 		//TimeoutInterval = EstimatedRTT + 4 * DevRTT;
 		
-	} while( /*sock timeout or */ !isACK(rcvpkt,sequence_number)); //resend
+	} while(timeout); //resend
 	
 
 	sequence_number++;
@@ -99,6 +132,9 @@ void rel_send(int sock, void *buf, int len)
 int rel_socket(int domain, int type, int protocol) {
 	sequence_number = 0;
 	ack_number = 0;
+	devRTT = 0;
+	estimatedRTT = INIT_ERTT;
+	timeoutInterval = estimatedRTT;
 	return socket(domain, type, protocol);
 }
 
@@ -118,7 +154,6 @@ int rel_recv(int sock, void * buffer, size_t length) {
 	if(connect(sock, (struct sockaddr*)&fromaddr, addrlen)) {
 		std::cerr << "couldn't connect socket" << std::endl;
 	}
-
 
 	while(!has_seq(rcvpkt,ack_number)){
 		make_pkt(sequence_number,ack_number-1,NULL,0,sndpkt,HDR_SZ);
