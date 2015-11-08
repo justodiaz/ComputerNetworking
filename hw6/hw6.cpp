@@ -42,7 +42,7 @@ int rel_connect(int socket,struct sockaddr_in *toaddr,int addrsize) {
 }
 
 int rel_rtt(int socket) {
-		 return 1000;
+		 return estimatedRTT;
 }
 
 void make_pkt(uint32_t seq_num, uint32_t ack_num, void *data, size_t data_len, 
