@@ -14,11 +14,13 @@
 #include <cerrno>
 #include "hw6.h"
 
+#define debug
+
 uint32_t sequence_number;
 uint32_t ack_number;
-uint32_t timeoutInterval; 
 uint32_t devRTT;
 uint32_t estimatedRTT;
+uint32_t first_acks;
 
 int timeval_to_msec(struct timeval *t) { 
 	return t->tv_sec*1000+t->tv_usec/1000;
@@ -64,67 +66,120 @@ bool isACK(void *rcvpkt, uint32_t ack_num){
 
 bool has_seq(void *rcvpkt, uint32_t seq_num){
 	hdr_ptr hdr = (hdr_ptr)rcvpkt;
-	
-	std::cerr << "Got packet " << ntohl(hdr->sequence_number) << std::endl;
+#ifdef debug	
+	std::cerr << "Got packet " << ntohl(hdr->sequence_number);
+	std::cerr << ", Expected " << seq_num << std::endl;
+#endif
 
 	return ntohl(hdr->sequence_number) == seq_num;	
 }
 
+void set_timeout_sock(int sock, uint32_t start, uint32_t end){
+	uint32_t timeoutInterval;
+
+	//TCP, only use estimatedRTT and devRTT after two acks
+	//First ack RTT is set as estimatedRTT	
+	if(first_acks < 2) {
+		timeoutInterval = INIT_TO;
+	}
+
+	else timeoutInterval = estimatedRTT + 4*devRTT;
+
+	uint32_t diff = end - start;//to subtract from timeout clock the time passed
+
+	if(timeoutInterval > diff) timeoutInterval -= diff;
+	else timeoutInterval = 1; //Really means timeout should happen soon.
+
+#ifdef debug
+	std::cerr <<"timeoutInterval: " << timeoutInterval <<std::endl;
+#endif
+	struct timeval to;
+	msec_to_timeval(timeoutInterval,&to); 
+	setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&to,sizeof(to));
+}
+
+//To implement timeouts, we set recv timeout options on sock with UDP protocol
+//For safety, we will save and restore any previous timeout opt. set when using the socket
+void save_sockopt(int sock, struct timeval *save){
+	socklen_t len = sizeof(struct timeval);
+
+	int ret = getsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,save,&len);
+	if(ret<0 || len != sizeof(struct timeval)){
+		perror("getsockopt");
+		exit(1);
+	}
+}
+
+void restore_sockopt(int sock, struct timeval *save){
+	int ret = setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,save,sizeof(struct timeval));
+	if(ret<0){
+		perror("setsockopt");
+		exit(1);
+	}
+}
 //caller gurantees len will be no longer than MAX_SEGMENT
 void rel_send(int sock, void *buf, int len)
 {
 	uint8_t sndpkt[MAX_PACKET];
 	uint8_t rcvpkt[MAX_PACKET];
+	bool timeout = false, get_sampleRTT = true; //TCP deson't compute for retransmitted segments
+	uint32_t start, end, sampleRTT;
+
+	struct timeval save;
+	save_sockopt(sock,&save);
 
 	make_pkt(sequence_number,ack_number,buf,(size_t)len,sndpkt,MAX_PACKET);
 
-	bool timeout = false;
-	unsigned start, end, sampleRTT;
 	do{
 		memset(rcvpkt, 0, MAX_PACKET);
-
+		timeout = false;
 		send(sock, sndpkt, HDR_SZ+len, 0);
 
 		start = current_msec();
+		end = start;
 
-		struct timeval to;
-		timeoutInterval	= estimatedRTT + 4*devRTT;
-		msec_to_timeval(timeoutInterval,&to); 
-		setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&to,sizeof(to));
-		//should block until ack is received
-		do{
-
+		while(1){
+			set_timeout_sock(sock,start,end);
 			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
+			end = current_msec();
 			if(ret<0){
 				if(errno == EAGAIN || errno == EWOULDBLOCK ) {
 					std::cerr << "timeout" << std::endl;
 					timeout = true; 
+					get_sampleRTT = false;
+					break;
 				}
 				else { 
 					perror("recv"); 
 					exit(1);
 				} 
 			}
-			else{ //compute sampleRTT;
-				if(isACK(rcvpkt,sequence_number)){
-				end = current_msec();
-				sampleRTT = end - start;	
+			else if(isACK(rcvpkt,sequence_number)){
+				if(get_sampleRTT){
+					sampleRTT = end - start;	
+					
+					if(first_acks == 0){
+						first_acks++;
+						estimatedRTT = sampleRTT;
+					}
+					else if(first_acks == 1){
+						first_acks++;//timeInterval can now be changed
+					}
 
-				estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
-				devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
-
-				std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
+					estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
+					devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
+					#ifdef debug
+					std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
+					#endif
 				}
-			}
-		} while(!timeout && !isACK(rcvpkt,sequence_number));
 
-		//unsigned SampleRTT = end - start;
-		//DevRTT = (1-.25) * DevRTT + .25 * abs(SampleRTT - EstimatedRTT);
-		//EstimatedRTT = (1-.125) * EstimatedRTT + .125 * SampleRTT;
-		//TimeoutInterval = EstimatedRTT + 4 * DevRTT;
-		
+				break;
+			}
+		}
+
 	} while(timeout); //resend
 	
+	restore_sockopt(sock,&save);	
 
 	sequence_number++;
 }
@@ -133,8 +188,8 @@ int rel_socket(int domain, int type, int protocol) {
 	sequence_number = 0;
 	ack_number = 0;
 	devRTT = 0;
-	estimatedRTT = INIT_ERTT;
-	timeoutInterval = estimatedRTT;
+	estimatedRTT = 0;
+	first_acks = 0;
 	return socket(domain, type, protocol);
 }
 
