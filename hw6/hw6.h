@@ -1,12 +1,14 @@
 #include <sys/time.h>
 
-#define SYN 1;
-#define FIN 2;
+#define NON 0x00
+#define FIN 0x01
+#define SYN 0x02
+#define ACK 0x10
 
 struct hw6_hdr {
 	uint32_t sequence_number;
 	uint32_t ack_number;
-	uint8_t flag;
+	uint8_t flags;
 };
 
 #define INIT_TO 1000 //msec, initial estimated rtt is 1 sec
