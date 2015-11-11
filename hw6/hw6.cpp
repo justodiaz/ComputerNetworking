@@ -14,6 +14,8 @@
 #include <cerrno>
 #include "hw6.h"
 
+#define TIMEWAIT 5000 //for fin ack to server, in milliseconds
+
 #define debug
 
 uint32_t sequence_number;
@@ -70,22 +72,22 @@ int rel_rtt(int socket) {
 	return estimatedRTT;
 }
 
-void make_pkt(uint32_t seq_num, uint32_t ack_num, uint8_t flags, void *data, size_t data_len, 
+void make_pkt(uint32_t seq_num, uint32_t ack_num, uint8_t flags, void *data, size_t len, 
 			  void *pkt, size_t pkt_sz){
 	
-	if(pkt_sz < HDR_SZ || pkt_sz < data_len) {
+	if(pkt_sz < HDR_SZ || pkt_sz < len) {
 		std::cerr << "make_pkt: error, not enough buffer space" << std::endl;
 		exit(1);
 	}
 
-	hdr_ptr pkt_hdr = (hdr_ptr)pkt;
+	hdr_ptr hdr = (hdr_ptr)pkt;
 	memset(pkt,0,pkt_sz);	
 
-	pkt_hdr->sequence_number = htonl(seq_num);
-	pkt_hdr->ack_number = htonl(ack_num);
-	pkt_hdr->flags = flags;
+	hdr->sequence_number = htonl(seq_num);
+	hdr->ack_number = htonl(ack_num);
+	hdr->flags = flags;
 
-	memcpy(pkt_hdr+1,data,data_len);
+	memcpy(hdr+1,data,len);
 }
 
 bool isACK(void *rcvpkt, uint32_t expected_ack_num){
@@ -102,6 +104,17 @@ bool has_seq(void *rcvpkt, uint32_t seq_num){
 #endif
 
 	return ntohl(hdr->sequence_number) == seq_num;	
+}
+
+bool has_seq_fin(void *rcvpkt, uint32_t seq_num){
+	hdr_ptr hdr = (hdr_ptr)rcvpkt;
+#ifdef debug	
+	std::cerr << "Has FIN? " << (hdr->flags & FIN) ;
+	std::cerr << ", Got packet " << ntohl(hdr->sequence_number);
+	std::cerr << ", Expected " << seq_num << std::endl;
+#endif
+
+	return (hdr->flags & FIN) && ntohl(hdr->sequence_number) == seq_num;	
 }
 
 void set_timeout_sock(int sock, uint32_t start, uint32_t end){
@@ -146,23 +159,46 @@ void restore_sockopt(int sock, struct timeval *save){
 		exit(1);
 	}
 }
-//caller gurantees len will be no longer than MAX_SEGMENT
-void rel_send(int sock, void *buf, int len)
-{
+
+void compute_sample_RTT(uint32_t start, uint32_t end){
+	uint32_t sampleRTT;
+
+	sampleRTT = end - start;	
+	
+	if(first_acks == 0){
+		first_acks++;
+		estimatedRTT = sampleRTT;
+	}
+	else if(first_acks == 1){
+		first_acks++;//timeInterval can now be changed
+	}
+
+	estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
+	devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
+
+	#ifdef debug
+	std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
+	#endif
+}
+
+void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 	uint8_t sndpkt[MAX_PACKET];
 	uint8_t rcvpkt[MAX_PACKET];
-
-	bool timeout = false, compute_sampleRTT = true; //TCP deson't compute for retransmitted segments
-	uint32_t start, end, sampleRTT;
-
+	bool timeout = false, retransmit = false;
+	uint32_t start, end;
 	struct timeval save;
+
 	save_sockopt(sock,&save);
 
-	make_pkt(sequence_number,ack_number,NON,buf,(size_t)len,sndpkt,MAX_PACKET);
+	make_pkt(sequence_number,ack_number,flags,buf,(size_t)len,sndpkt,MAX_PACKET);
 
 	do{
 		memset(rcvpkt, 0, MAX_PACKET);
 		timeout = false;
+
+		#ifdef debug
+		std::cerr <<"Sending packet" << std::endl;
+		#endif
 
 		send(sock, sndpkt, HDR_SZ+len, 0);
 
@@ -175,13 +211,17 @@ void rel_send(int sock, void *buf, int len)
 			end = current_msec();
 			if(ret<0){
 				if(errno == EAGAIN || errno == EWOULDBLOCK ) {
+					timeout = retransmit = true;
 					#ifdef debug
 					std::cerr << "*** Timeout ***" << std::endl;
 					#endif
-					timeout = true; 
-					//TCP never computes sampleRTT for retransmitted segment
-					compute_sampleRTT = false;
 					break;
+				}
+				else if(errno == ECONNREFUSED){
+					#ifdef debug
+					std::cerr << "Connection refused" << std::endl;
+					#endif
+					return;
 				}
 				else { 
 					perror("recv"); 
@@ -189,26 +229,23 @@ void rel_send(int sock, void *buf, int len)
 				} 
 			}
 			else if(isACK(rcvpkt,sequence_number)){
-				if(compute_sampleRTT){
-					sampleRTT = end - start;	
-					
-					if(first_acks == 0){
-						first_acks++;
-						estimatedRTT = sampleRTT;
-					}
-					else if(first_acks == 1){
-						first_acks++;//timeInterval can now be changed
-					}
-
-					estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
-					devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
-
-					#ifdef debug
-					std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
-					#endif
-				}
+				//TCP never computes sampleRTT for retransmitted segment
+				#ifdef debug
+				std::cerr << "Got ACK!" <<std::endl;
+				#endif 
+				if(!retransmit)
+					compute_sample_RTT(start,end);
 
 				break;
+			}
+			else if(has_seq_fin(rcvpkt,ack_number-1)){//acting as receiver
+				#ifdef debug
+				std::cerr << "Got a FIN! Resending FINACK with ack number: ";
+				std::cerr << ack_number-1 <<std::endl;
+				#endif 
+				uint8_t ack_fin[HDR_SZ];
+				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack_fin,HDR_SZ);
+				send(sock,ack_fin,HDR_SZ,0);
 			}
 		}
 
@@ -217,6 +254,11 @@ void rel_send(int sock, void *buf, int len)
 	restore_sockopt(sock,&save);	
 
 	sequence_number++;
+}
+
+void rel_send(int sock, void *buf, int len)
+{
+	rel_send_flags(sock,buf,len,NON);
 }
 
 int rel_socket(int domain, int type, int protocol) {
@@ -269,123 +311,45 @@ int rel_recv(int sock, void * buffer, size_t length) {
 	return recv_count-HDR_SZ;
 }
 
-bool has_seq_fin(void *rcvpkt, uint32_t seq_num){
-	hdr_ptr hdr = (hdr_ptr)rcvpkt;
-#ifdef debug	
-	std::cerr << "Has FIN? " << (hdr->flags & FIN) ;
-	std::cerr << ", Got packet " << ntohl(hdr->sequence_number);
-	std::cerr << ", Expected " << seq_num << std::endl;
-#endif
-
-	return (hdr->flags & FIN) && ntohl(hdr->sequence_number) == seq_num;	
-}
-
-void rel_send_fin(int sock)
-{
-	uint8_t sndpkt[HDR_SZ];
-	uint8_t rcvpkt[HDR_SZ];
-
-	bool timeout = false, compute_sampleRTT = true; //TCP deson't compute for retransmitted segments
-	uint32_t start, end, sampleRTT;
-
-	struct timeval save;
-	save_sockopt(sock,&save);
-
-	make_pkt(sequence_number,ack_number,FIN,NULL,0,sndpkt,HDR_SZ);
-
-	#ifdef debug
-	std::cerr << "rel_send_fin: seq_number: " << sequence_number << " ack_number: " << ack_number <<std::endl;
-	#endif 
-
-	do{
-		memset(rcvpkt, 0, HDR_SZ);
-		timeout = false;
-
-		send(sock, sndpkt, HDR_SZ, 0);
-
-		start = current_msec();
-		end = start;//initial in set_timeout_sock
-
-		while(1){
-			set_timeout_sock(sock,start,end);
-			int ret = recv(sock, rcvpkt, HDR_SZ, 0);
-			end = current_msec();
-			if(ret<0){
-				if(errno == EAGAIN || errno == EWOULDBLOCK ) {
-					#ifdef debug
-					std::cerr << "*** Timeout ***" << std::endl;
-					#endif
-					timeout = true; 
-					//TCP never computes sampleRTT for retransmitted segment
-					compute_sampleRTT = false;
-					break;
-				}
-				else { 
-					perror("recv"); 
-					exit(1);
-				} 
-			}
-			else if(isACK(rcvpkt,sequence_number)){
-				#ifdef debug
-				std::cerr << "Got fin ack!" <<std::endl;
-				#endif 
-				if(compute_sampleRTT){
-					sampleRTT = end - start;	
-					
-					if(first_acks == 0){
-						first_acks++;
-						estimatedRTT = sampleRTT;
-					}
-					else if(first_acks == 1){
-						first_acks++;//timeInterval can now be changed
-					}
-
-					estimatedRTT = (1-.125)*estimatedRTT + .125*sampleRTT;
-					devRTT = (1-.25)*devRTT + .25*diff(sampleRTT,estimatedRTT);
-
-					#ifdef debug
-					std::cerr << "estimatedRTT: " << estimatedRTT << std::endl;
-					#endif
-				}
-
-				break;
-			}
-			else if(has_seq_fin(rcvpkt,ack_number-1)){//and is FIN
-				#ifdef debug
-				std::cerr << "Got a fin! Resending fin ack" <<std::endl;
-				#endif 
-				uint8_t ack_fin[HDR_SZ];
-				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack_fin,HDR_SZ);
-				send(sock,sndpkt,HDR_SZ,0);
-			}
-		}
-
-	} while(timeout); //resend
-	
-	restore_sockopt(sock,&save);	
-
-	sequence_number++;
-}
+#define TIMEOUT_CONNREFUSED (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNREFUSED)
 
 int rel_recv_fin(int sock) {
 	uint8_t rcvpkt[HDR_SZ];
-	memset(&rcvpkt,0,HDR_SZ);
 	uint8_t sndpkt[HDR_SZ];
 
-	int recv_count = recv(sock, rcvpkt, HDR_SZ, 0);		
-
-	
 	#ifdef debug
-	std::cerr << "rel_recv_fin: seq_num: "<<sequence_number << " ack_number: " << ack_number <<std::endl;
+	std::cerr << "rel_recv_fin: seq_num: " << sequence_number;
+	std::cerr << " ack_number: " << ack_number <<std::endl;
 	#endif 
-	while(!has_seq_fin(rcvpkt,ack_number)){
-		make_pkt(sequence_number,ack_number-1,ACK,NULL,0,sndpkt,HDR_SZ);
-		send(sock,sndpkt,HDR_SZ,0);
 
+	int recv_count;
+	while(1){
 		memset(&rcvpkt,0,HDR_SZ);
-		recv_count = recv(sock,rcvpkt,HDR_SZ,0);
-	}	
+		recv_count = recv(sock, rcvpkt, HDR_SZ, 0);		
 
+		if(recv_count < 0){
+			if(TIMEOUT_CONNREFUSED){
+				#ifdef debug
+				std::cerr << "Not waiting for FIN from server" << std::endl;
+				#endif
+				return 0;
+			}
+			else{
+				perror("rel_recv_fin: recv");
+				exit(1);
+			}
+		}
+		else if(recv_count >= 0 && recv_count < HDR_SZ){
+			#ifdef debug
+			std::cerr << "Got strange segment, ignoring" <<std::endl;
+			#endif
+		}
+		else if(!has_seq_fin(rcvpkt,ack_number)){
+			make_pkt(sequence_number,ack_number-1,ACK,NULL,0,sndpkt,HDR_SZ);
+			send(sock,sndpkt,HDR_SZ,0);
+		}
+		else break;
+	} 
 
 	//Got FIN, send ack and time wait
 	make_pkt(sequence_number,ack_number,ACK,NULL,0,sndpkt,HDR_SZ);
@@ -395,7 +359,7 @@ int rel_recv_fin(int sock) {
 	save_sockopt(sock,&save);
 
 	struct timeval timewait;
-	msec_to_timeval(2000,&timewait);
+	msec_to_timeval(TIMEWAIT,&timewait);
 
 	setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&timewait,sizeof(struct timeval));
 
@@ -403,11 +367,11 @@ int rel_recv_fin(int sock) {
 	std::cerr << "Sent fin ack" <<std::endl;
 	#endif 
 
-	do{
-		int ret = recv(sock,rcvpkt,HDR_SZ,0);
+	while(1){
+		recv_count = recv(sock,rcvpkt,HDR_SZ,0);
 
-		if(ret<0){
-			if(errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNREFUSED) {
+		if(recv_count<0){
+			if(TIMEOUT_CONNREFUSED) {
 				#ifdef debug
 				std::cerr << "Assuming server got my fin ack" << std::endl;
 				#endif
@@ -418,21 +382,28 @@ int rel_recv_fin(int sock) {
 				exit(1);
 			} 
 		}
-
-		#ifdef debug
-		std::cerr << "Resending fin ack" <<std::endl;
-		#endif 
-
-		send(sock,sndpkt,HDR_SZ,0);		
-	}while(1);	
+		else if(recv_count >= HDR_SZ && has_seq_fin(rcvpkt,ack_number)){
+			#ifdef debug
+			std::cerr << "Resending fin ack" <<std::endl;
+			#endif 
+			send(sock,sndpkt,HDR_SZ,0);		
+		}
+		else{
+			#ifdef debug
+			std::cerr << "Got strange segment, ignoring" <<std::endl;
+			#endif 
+		}
+	}	
 
 	restore_sockopt(sock,&save);
 
 	ack_number++;
+
+	return recv_count - HDR_SZ;
 }
 
 int rel_close(int sock) {
-	rel_send_fin(sock); // send an empty packet to signify end of file
+	rel_send_flags(sock,NULL,0,FIN); // send an empty packet to signify end of file
 
 	if(!server) rel_recv_fin(sock);	
 
