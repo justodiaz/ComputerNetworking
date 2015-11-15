@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 
 #include <iostream>
+#include <csignal> //sigaction
 #include <cstddef> //size_t
 #include <cstdint> //uint#_t
 #include <cerrno>
@@ -24,6 +25,7 @@ uint32_t devRTT;
 uint32_t estimatedRTT;
 uint32_t first_acks;
 bool server;
+bool timeout; 
 
 int timeval_to_msec(struct timeval *t) { 
 	return t->tv_sec*1000+t->tv_usec/1000;
@@ -108,6 +110,7 @@ bool has_seq(void *rcvpkt, uint32_t seq_num){
 
 bool has_seq_fin(void *rcvpkt, uint32_t seq_num){
 	hdr_ptr hdr = (hdr_ptr)rcvpkt;
+
 #ifdef debug	
 	std::cerr << "Has FIN? " << (hdr->flags & FIN) ;
 	std::cerr << ", Got packet " << ntohl(hdr->sequence_number);
@@ -115,29 +118,6 @@ bool has_seq_fin(void *rcvpkt, uint32_t seq_num){
 #endif
 
 	return (hdr->flags & FIN) && ntohl(hdr->sequence_number) == seq_num;	
-}
-
-void set_timeout_sock(int sock, uint32_t start, uint32_t end){
-	uint32_t timeoutInterval;
-
-	//TCP, only use estimatedRTT and devRTT after two acks
-	//First ack RTT is set as estimatedRTT	
-	if(first_acks < 2) 
-		timeoutInterval = INIT_TO;
-	else 
-		timeoutInterval = estimatedRTT + 4*devRTT;
-
-	uint32_t diff = end - start;//to subtract from timeout clock the time passed
-
-	if(timeoutInterval > diff) timeoutInterval -= diff;
-	else timeoutInterval = 1; //Really means timeout should happen soon.
-
-#ifdef debug
-	std::cerr <<"timeoutInterval: " << timeoutInterval <<std::endl;
-#endif
-	struct timeval to;
-	msec_to_timeval(timeoutInterval,&to); 
-	setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&to,sizeof(to));
 }
 
 //To implement timeouts, we set recv timeout options on sock with UDP protocol
@@ -181,16 +161,36 @@ void compute_sample_RTT(uint32_t start, uint32_t end){
 	#endif
 }
 
+void handle_sigalarm(int sig){
+	timeout = true;
+}
+
 void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 	uint8_t sndpkt[MAX_PACKET];
 	uint8_t rcvpkt[MAX_PACKET];
-	bool timeout = false, retransmit = false;
+	bool retransmit = false;
 	uint32_t start, end;
-	struct timeval save;
-
-	save_sockopt(sock,&save);
 
 	make_pkt(sequence_number,ack_number,flags,buf,(size_t)len,sndpkt,MAX_PACKET);
+
+	uint32_t timeoutInterval;
+
+	//TCP, only use estimatedRTT and devRTT after two acks
+	//First ack RTT is set as estimatedRTT	
+	if(first_acks < 2) 
+		timeoutInterval = INIT_TO;
+	else 
+		timeoutInterval = estimatedRTT + 4*devRTT;
+
+#ifdef debug
+	std::cerr <<"timeoutInterval: " << timeoutInterval <<std::endl;
+#endif
+
+	struct itimerval timer = {{0,0}, {0,0}};
+	msec_to_timeval(timeoutInterval,&timer.it_value);
+	timer.it_interval = timer.it_value;
+
+	if(setitimer(ITIMER_REAL,&timer,NULL)){perror("setitimer");exit(1);}
 
 	do{
 		memset(rcvpkt, 0, MAX_PACKET);
@@ -201,17 +201,20 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 		#endif
 
 		send(sock, sndpkt, HDR_SZ+len, 0);
-
 		start = current_msec();
-		end = start;//initial in set_timeout_sock
 
 		while(1){
-			set_timeout_sock(sock,start,end);
 			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
 			end = current_msec();
+
+			#ifdef debug
+			if(getitimer(ITIMER_REAL,&timer)){perror("getitimer");exit(1);}
+			std::cerr <<"Left on timeout: " << timeval_to_msec(&timer.it_value) <<std::endl;
+			#endif
+			
 			if(ret<0){
-				if(errno == EAGAIN || errno == EWOULDBLOCK ) {
-					timeout = retransmit = true;
+				if(errno == EINTR && timeout) {
+					retransmit = true;
 					#ifdef debug
 					std::cerr << "*** Timeout ***" << std::endl;
 					#endif
@@ -229,6 +232,9 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				} 
 			}
 			else if(isACK(rcvpkt,sequence_number)){
+				timer = {{0,0},{0,0}};
+				if(setitimer(ITIMER_REAL,&timer,NULL)){perror("setitimer");exit(1);}
+				timeout = false;
 				//TCP never computes sampleRTT for retransmitted segment
 				#ifdef debug
 				std::cerr << "Got ACK!" <<std::endl;
@@ -238,7 +244,7 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 
 				break;
 			}
-			else if(has_seq_fin(rcvpkt,ack_number-1)){//acting as receiver
+			else if(has_seq_fin(rcvpkt,ack_number-1)){//Reack last packet received
 				#ifdef debug
 				std::cerr << "Got a FIN! Resending FINACK with ack number: ";
 				std::cerr << ack_number-1 <<std::endl;
@@ -247,11 +253,13 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack_fin,HDR_SZ);
 				send(sock,ack_fin,HDR_SZ,0);
 			}
+			else{//strange packet
+				std::cerr <<"rel_send(): unknown packet"<<std::endl;				
+			}
 		}
 
 	} while(timeout); //resend
 	
-	restore_sockopt(sock,&save);	
 
 	sequence_number++;
 }
@@ -268,6 +276,15 @@ int rel_socket(int domain, int type, int protocol) {
 	estimatedRTT = 0;
 	first_acks = 0;
 	server = false;
+	timeout = false;
+	
+	struct sigaction act;
+	act.sa_handler = handle_sigalarm;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0; 
+	
+	sigaction(SIGALRM,&act,NULL);
+
 	return socket(domain, type, protocol);
 }
 
