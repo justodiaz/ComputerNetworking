@@ -162,6 +162,9 @@ void compute_sample_RTT(uint32_t start, uint32_t end){
 }
 
 void handle_sigalarm(int sig){
+	#ifdef debug
+	std::cerr << "*** Timeout ***" << std::endl;
+	#endif
 	timeout = true;
 }
 
@@ -209,15 +212,12 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 
 			#ifdef debug
 			if(getitimer(ITIMER_REAL,&timer)){perror("getitimer");exit(1);}
-			std::cerr <<"Left on timeout: " << timeval_to_msec(&timer.it_value) <<std::endl;
+			std::cerr <<"Time on clock: " << timeval_to_msec(&timer.it_value) <<std::endl;
 			#endif
 			
 			if(ret<0){
 				if(errno == EINTR && timeout) {
 					retransmit = true;
-					#ifdef debug
-					std::cerr << "*** Timeout ***" << std::endl;
-					#endif
 					break;
 				}
 				else if(errno == ECONNREFUSED){
@@ -232,13 +232,14 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				} 
 			}
 			else if(isACK(rcvpkt,sequence_number)){
+				#ifdef debug
+				std::cerr << "Got ACK!" <<std::endl;
+				#endif 
+				//stop timer
 				timer = {{0,0},{0,0}};
 				if(setitimer(ITIMER_REAL,&timer,NULL)){perror("setitimer");exit(1);}
 				timeout = false;
 				//TCP never computes sampleRTT for retransmitted segment
-				#ifdef debug
-				std::cerr << "Got ACK!" <<std::endl;
-				#endif 
 				if(!retransmit)
 					compute_sample_RTT(start,end);
 
@@ -254,7 +255,7 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				send(sock,ack_fin,HDR_SZ,0);
 			}
 			else{//strange packet
-				std::cerr <<"rel_send(): unknown packet"<<std::endl;				
+				std::cerr <<"Got unexpected packet"<<std::endl;				
 			}
 		}
 
