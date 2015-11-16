@@ -65,8 +65,7 @@ int rel_connect(int socket,struct sockaddr_in *toaddr,int addrsize) {
 //
 //	hdr_ptr hdr = (hdr_ptr)rcvpkt;
 //	ack_number = ntohl(hdr->ack_number);
-
-	
+	return 0;	
 
 }
 
@@ -108,10 +107,10 @@ bool has_seq(void *rcvpkt, uint32_t seq_num, uint8_t flags){
 	return (hdr->flags & flags) == flags && ntohl(hdr->sequence_number) == seq_num;	
 }
 
-void compute_sample_RTT(struct timeval *init, struct timeval *left){
+void compute_sample_RTT(uint32_t init, uint32_t left){
 	uint32_t sampleRTT;
 
-	sampleRTT = timeval_to_msec(init) - timeval_to_msec(left);	
+	sampleRTT = init - left;	
 	
 	if(first_acks == 0){
 		first_acks++;
@@ -162,7 +161,7 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 	uint8_t rcvpkt[MAX_PACKET];
 	bool retransmit = false;
 	uint32_t timeoutInterval;
-	struct itimerval timer = {0}, left;
+	struct itimerval timer = {0};
 
 	struct sigaction old;
 	set_handler(&old);
@@ -178,7 +177,7 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 	std::cerr <<"timeoutInterval: " << timeoutInterval <<std::endl;
 	#endif
 
-	msec_to_timeval(timeoutInterval,&timer.it_value);
+//	msec_to_timeval(timeoutInterval,&timer.it_value);
 
 	make_pkt(sequence_number,ack_number,flags,buf,(size_t)len,sndpkt,MAX_PACKET);
 
@@ -190,20 +189,30 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 		std::cerr <<"Sending packet" << std::endl;
 		#endif
 
+		msec_to_timeval(timeoutInterval,&timer.it_value);
+
 		send(sock, sndpkt, HDR_SZ+len, 0);
-		Setitimer(ITIMER_REAL,&timer,NULL);
+		//Setitimer(ITIMER_REAL,&timer,NULL);
 
 		while(1){
+			if(timer.it_value.tv_sec == 0 && timer.it_value.tv_usec == 0)
+				timer.it_value.tv_usec = 1000;//safety
+
+			Setitimer(ITIMER_REAL,&timer,NULL);
 			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
-			Getitimer(ITIMER_REAL,&left);
+			Getitimer(ITIMER_REAL,&timer);
+
 
 			#ifdef debug
-			std::cerr <<"Time on clock: " << timeval_to_msec(&left.it_value) <<std::endl;
+			std::cerr <<"Time on clock: " << timeval_to_msec(&timer.it_value) <<std::endl;
 			#endif
 			
 			if(ret<0){
 				if(errno == EINTR && timeout) {
 					//TCP would double timeout interval after each timeout
+					#ifdef debug
+					std::cerr << "Timeout OK" <<std::endl;
+					#endif	
 					retransmit = true;
 					break;
 				}
@@ -224,7 +233,7 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				#endif 
 				//TCP never computes sampleRTT for retransmitted segment
 				if(!retransmit)
-					compute_sample_RTT(&timer.it_value,&left.it_value);
+					compute_sample_RTT(timeoutInterval,timeval_to_msec(&timer.it_value));
 
 				//stop timer
 				timer = {{0,0},{0,0}};
@@ -392,5 +401,7 @@ int rel_close(int sock) {
 	}
 
 	close(sock);
+	
+	return 0;
 }
 
