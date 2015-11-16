@@ -17,7 +17,7 @@
 
 #define TIMEWAIT 5000 //for fin ack to server, in milliseconds
 
-//#define debug
+#define debug
 
 uint32_t sequence_number;
 uint32_t ack_number;
@@ -195,13 +195,12 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 		//Setitimer(ITIMER_REAL,&timer,NULL);
 
 		while(1){
-			if(timer.it_value.tv_sec == 0 && timer.it_value.tv_usec == 0)
+			if(timer.it_value.tv_sec == 0 && timer.it_value.tv_usec < 1000)
 				timer.it_value.tv_usec = 1000;//safety
 
 			Setitimer(ITIMER_REAL,&timer,NULL);
 			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
 			Getitimer(ITIMER_REAL,&timer);
-
 
 			#ifdef debug
 			std::cerr <<"Time on clock: " << timeval_to_msec(&timer.it_value) <<std::endl;
