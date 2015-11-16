@@ -23,7 +23,7 @@ uint32_t sequence_number;
 uint32_t ack_number;
 uint32_t devRTT;
 uint32_t estimatedRTT;
-uint32_t first_acks;
+uint32_t first_acks; //Don't use estimatedRTT and devRTT until after two samples
 bool server;
 bool timeout; 
 
@@ -98,52 +98,20 @@ bool isACK(void *rcvpkt, uint32_t expected_ack_num){
 	return (hdr->flags & ACK) && ntohl(hdr->ack_number) == expected_ack_num;
 }
 
-bool has_seq(void *rcvpkt, uint32_t seq_num){
+bool has_seq(void *rcvpkt, uint32_t seq_num, uint8_t flags){
 	hdr_ptr hdr = (hdr_ptr)rcvpkt;
 #ifdef debug	
 	std::cerr << "Got packet " << ntohl(hdr->sequence_number);
 	std::cerr << ", Expected " << seq_num << std::endl;
 #endif
 
-	return ntohl(hdr->sequence_number) == seq_num;	
+	return (hdr->flags & flags) == flags && ntohl(hdr->sequence_number) == seq_num;	
 }
 
-bool has_seq_fin(void *rcvpkt, uint32_t seq_num){
-	hdr_ptr hdr = (hdr_ptr)rcvpkt;
-
-#ifdef debug	
-	std::cerr << "Has FIN? " << (hdr->flags & FIN) ;
-	std::cerr << ", Got packet " << ntohl(hdr->sequence_number);
-	std::cerr << ", Expected " << seq_num << std::endl;
-#endif
-
-	return (hdr->flags & FIN) && ntohl(hdr->sequence_number) == seq_num;	
-}
-
-//To implement timeouts, we set recv timeout options on sock with UDP protocol
-//For safety, we will save and restore any previous timeout opt. set when using the socket
-void save_sockopt(int sock, struct timeval *save){
-	socklen_t len = sizeof(struct timeval);
-
-	int ret = getsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,save,&len);
-	if(ret<0 || len != sizeof(struct timeval)){
-		perror("getsockopt");
-		exit(1);
-	}
-}
-
-void restore_sockopt(int sock, struct timeval *save){
-	int ret = setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,save,sizeof(struct timeval));
-	if(ret<0){
-		perror("setsockopt");
-		exit(1);
-	}
-}
-
-void compute_sample_RTT(uint32_t start, uint32_t end){
+void compute_sample_RTT(struct timeval *init, struct timeval *left){
 	uint32_t sampleRTT;
 
-	sampleRTT = end - start;	
+	sampleRTT = timeval_to_msec(init) - timeval_to_msec(left);	
 	
 	if(first_acks == 0){
 		first_acks++;
@@ -168,35 +136,54 @@ void handle_sigalarm(int sig){
 	timeout = true;
 }
 
+void Setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value){
+	if(setitimer(which,new_value,old_value)){
+		perror("setitimer");
+		exit(1);
+	}
+}
+void Getitimer(int which, struct itimerval *curr_value){
+	if(getitimer(which,curr_value)){
+		perror("getitimer");
+		exit(1);
+	}
+}
+
+void set_handler(struct sigaction *old){
+	struct sigaction act;
+	act.sa_handler = handle_sigalarm;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0; 
+	sigaction(SIGALRM,&act,old);
+}
+
 void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 	uint8_t sndpkt[MAX_PACKET];
 	uint8_t rcvpkt[MAX_PACKET];
 	bool retransmit = false;
-	uint32_t start, end;
-
-	make_pkt(sequence_number,ack_number,flags,buf,(size_t)len,sndpkt,MAX_PACKET);
-
 	uint32_t timeoutInterval;
+	struct itimerval timer = {0}, left;
 
-	//TCP, only use estimatedRTT and devRTT after two acks
-	//First ack RTT is set as estimatedRTT	
+	struct sigaction old;
+	set_handler(&old);
+
+	/* TCP, only use estimatedRTT and devRTT after two acks
+	   First ack RTT is set as estimatedRTT */
 	if(first_acks < 2) 
 		timeoutInterval = INIT_TO;
 	else 
 		timeoutInterval = estimatedRTT + 4*devRTT;
 
-#ifdef debug
+	#ifdef debug
 	std::cerr <<"timeoutInterval: " << timeoutInterval <<std::endl;
-#endif
+	#endif
 
-	struct itimerval timer = {{0,0}, {0,0}};
 	msec_to_timeval(timeoutInterval,&timer.it_value);
-	timer.it_interval = timer.it_value;
 
-	if(setitimer(ITIMER_REAL,&timer,NULL)){perror("setitimer");exit(1);}
+	make_pkt(sequence_number,ack_number,flags,buf,(size_t)len,sndpkt,MAX_PACKET);
 
 	do{
-		memset(rcvpkt, 0, MAX_PACKET);
+		memset(rcvpkt,0,MAX_PACKET);
 		timeout = false;
 
 		#ifdef debug
@@ -204,19 +191,19 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 		#endif
 
 		send(sock, sndpkt, HDR_SZ+len, 0);
-		start = current_msec();
+		Setitimer(ITIMER_REAL,&timer,NULL);
 
 		while(1){
 			int ret = recv(sock, rcvpkt, MAX_PACKET, 0);
-			end = current_msec();
+			Getitimer(ITIMER_REAL,&left);
 
 			#ifdef debug
-			if(getitimer(ITIMER_REAL,&timer)){perror("getitimer");exit(1);}
-			std::cerr <<"Time on clock: " << timeval_to_msec(&timer.it_value) <<std::endl;
+			std::cerr <<"Time on clock: " << timeval_to_msec(&left.it_value) <<std::endl;
 			#endif
 			
 			if(ret<0){
 				if(errno == EINTR && timeout) {
+					//TCP would double timeout interval after each timeout
 					retransmit = true;
 					break;
 				}
@@ -235,38 +222,38 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				#ifdef debug
 				std::cerr << "Got ACK!" <<std::endl;
 				#endif 
-				//stop timer
-				timer = {{0,0},{0,0}};
-				if(setitimer(ITIMER_REAL,&timer,NULL)){perror("setitimer");exit(1);}
-				timeout = false;
 				//TCP never computes sampleRTT for retransmitted segment
 				if(!retransmit)
-					compute_sample_RTT(start,end);
+					compute_sample_RTT(&timer.it_value,&left.it_value);
 
+				//stop timer
+				timer = {{0,0},{0,0}};
+				Setitimer(ITIMER_REAL,&timer,NULL);
+				timeout = false;
 				break;
 			}
-			else if(has_seq_fin(rcvpkt,ack_number-1)){//Reack last packet received
+			else if(has_seq(rcvpkt,ack_number-1,NON)){//Reack last packet received
 				#ifdef debug
-				std::cerr << "Got a FIN! Resending FINACK with ack number: ";
+				std::cerr << "Resending ACK with ack number: ";
 				std::cerr << ack_number-1 <<std::endl;
 				#endif 
-				uint8_t ack_fin[HDR_SZ];
-				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack_fin,HDR_SZ);
-				send(sock,ack_fin,HDR_SZ,0);
+				uint8_t ack[HDR_SZ];
+				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack,HDR_SZ);
+				send(sock,ack,HDR_SZ,0);
 			}
 			else{//strange packet
-				std::cerr <<"Got unexpected packet"<<std::endl;				
+				std::cerr <<"rel_send_flags: Got unexpected packet"<<std::endl;				
 			}
 		}
 
 	} while(timeout); //resend
 	
+	sigaction(SIGALRM,&old,NULL);
 
 	sequence_number++;
 }
 
-void rel_send(int sock, void *buf, int len)
-{
+void rel_send(int sock, void *buf, int len){
 	rel_send_flags(sock,buf,len,NON);
 }
 
@@ -278,19 +265,11 @@ int rel_socket(int domain, int type, int protocol) {
 	first_acks = 0;
 	server = false;
 	timeout = false;
-	
-	struct sigaction act;
-	act.sa_handler = handle_sigalarm;
-	sigemptyset(&act.sa_mask);
-	act.sa_flags = 0; 
-	
-	sigaction(SIGALRM,&act,NULL);
 
 	return socket(domain, type, protocol);
 }
 
-
-int rel_recv(int sock, void * buffer, size_t length) {
+int rel_recv_flags(int sock, void * buffer, size_t length, uint8_t flags) {
 	uint8_t rcvpkt[MAX_PACKET];
 	memset(&rcvpkt,0,MAX_PACKET);
 	uint8_t sndpkt[HDR_SZ];
@@ -298,25 +277,48 @@ int rel_recv(int sock, void * buffer, size_t length) {
 	struct sockaddr_in fromaddr;
 	unsigned addrlen = sizeof(fromaddr);	
 	int recv_count = recvfrom(sock, rcvpkt, MAX_PACKET, 0, (struct sockaddr*)&fromaddr, &addrlen);		
-
 	// this is a shortcut to 'connect' a listening server socket to the incoming client.
 	// after this, we can use send() instead of sendto(), which makes for easier bookkeeping
 	if(connect(sock, (struct sockaddr*)&fromaddr, addrlen)) {
 		std::cerr << "couldn't connect socket" << std::endl;
 	}
 
-	while(!has_seq(rcvpkt,ack_number)){
-		make_pkt(sequence_number,ack_number-1,ACK,NULL,0,sndpkt,HDR_SZ);
-		send(sock,sndpkt,HDR_SZ,0);
+	while(1){
+		if(recv_count < 0){
+			if((errno == EINTR && timeout) || errno == ECONNREFUSED){
+				#ifdef debug
+				std::cerr << "Connection lost. Not receiving" << std::endl;
+				#endif
+				return 0;
+			}
+			else{
+				perror("rel_recv_flags: recv");
+				exit(1);
+			}
+		}
+		else if(recv_count >= 0 && recv_count < HDR_SZ){
+			#ifdef debug
+			std::cerr << "rel_recv_flags: Got strange segment, ignoring" <<std::endl;
+			#endif
+		}
+		else if(!has_seq(rcvpkt,ack_number,flags)){
+			#ifdef debug
+			std::cerr << "rel_recv_flags: resending ack" << std::endl;
+			#endif
+
+			make_pkt(sequence_number,ack_number-1,ACK,NULL,0,sndpkt,HDR_SZ);
+			send(sock,sndpkt,HDR_SZ,0);
+		}
+		else break;
 
 		memset(&rcvpkt,0,MAX_PACKET);
-		recv_count = recv(sock,rcvpkt,MAX_PACKET,0);
-	}	
+		recv_count = recv(sock, rcvpkt, MAX_PACKET, 0);		
+	} 
 
 	make_pkt(sequence_number,ack_number,ACK,NULL,0,sndpkt,HDR_SZ);
 	send(sock,sndpkt,HDR_SZ,0);
-
-
+	
+	/* One side of connection should not go into timewait state */
 	hdr_ptr hdr = (hdr_ptr)rcvpkt;
 	if(hdr->flags & FIN){
 		server = true;
@@ -329,101 +331,61 @@ int rel_recv(int sock, void * buffer, size_t length) {
 	return recv_count-HDR_SZ;
 }
 
-#define TIMEOUT_CONNREFUSED (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNREFUSED)
-
-int rel_recv_fin(int sock) {
-	uint8_t rcvpkt[HDR_SZ];
-	uint8_t sndpkt[HDR_SZ];
-
-	#ifdef debug
-	std::cerr << "rel_recv_fin: seq_num: " << sequence_number;
-	std::cerr << " ack_number: " << ack_number <<std::endl;
-	#endif 
-
-	int recv_count;
-	while(1){
-		memset(&rcvpkt,0,HDR_SZ);
-		recv_count = recv(sock, rcvpkt, HDR_SZ, 0);		
-
-		if(recv_count < 0){
-			if(TIMEOUT_CONNREFUSED){
-				#ifdef debug
-				std::cerr << "Not waiting for FIN from server" << std::endl;
-				#endif
-				return 0;
-			}
-			else{
-				perror("rel_recv_fin: recv");
-				exit(1);
-			}
-		}
-		else if(recv_count >= 0 && recv_count < HDR_SZ){
-			#ifdef debug
-			std::cerr << "Got strange segment, ignoring" <<std::endl;
-			#endif
-		}
-		else if(!has_seq_fin(rcvpkt,ack_number)){
-			make_pkt(sequence_number,ack_number-1,ACK,NULL,0,sndpkt,HDR_SZ);
-			send(sock,sndpkt,HDR_SZ,0);
-		}
-		else break;
-	} 
-
-	//Got FIN, send ack and time wait
-	make_pkt(sequence_number,ack_number,ACK,NULL,0,sndpkt,HDR_SZ);
-	send(sock,sndpkt,HDR_SZ,0);
-
-	struct timeval save;
-	save_sockopt(sock,&save);
-
-	struct timeval timewait;
-	msec_to_timeval(TIMEWAIT,&timewait);
-
-	setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,&timewait,sizeof(struct timeval));
-
-	#ifdef debug
-	std::cerr << "Sent fin ack" <<std::endl;
-	#endif 
-
-	while(1){
-		recv_count = recv(sock,rcvpkt,HDR_SZ,0);
-
-		if(recv_count<0){
-			if(TIMEOUT_CONNREFUSED) {
-				#ifdef debug
-				std::cerr << "Assuming server got my fin ack" << std::endl;
-				#endif
-				break;
-			}
-			else { 
-				perror("rel_recv : recv"); 
-				exit(1);
-			} 
-		}
-		else if(recv_count >= HDR_SZ && has_seq_fin(rcvpkt,ack_number)){
-			#ifdef debug
-			std::cerr << "Resending fin ack" <<std::endl;
-			#endif 
-			send(sock,sndpkt,HDR_SZ,0);		
-		}
-		else{
-			#ifdef debug
-			std::cerr << "Got strange segment, ignoring" <<std::endl;
-			#endif 
-		}
-	}	
-
-	restore_sockopt(sock,&save);
-
-	ack_number++;
-
-	return recv_count - HDR_SZ;
+int rel_recv(int sock, void * buffer, size_t length) {
+	return rel_recv_flags(sock,buffer,length,NON);
 }
 
 int rel_close(int sock) {
 	rel_send_flags(sock,NULL,0,FIN); // send an empty packet to signify end of file
 
-	if(!server) rel_recv_fin(sock);	
+	if(!server) {
+		rel_recv_flags(sock,NULL,0,FIN);	
+
+		#ifdef debug
+		std::cerr << "Sent fin ack" <<std::endl;
+		#endif 
+		uint8_t rcvpkt[HDR_SZ];
+		int recv_count;
+
+		struct sigaction old;
+		set_handler(&old);
+
+		struct itimerval timewait = {0};
+		msec_to_timeval(TIMEWAIT,&timewait.it_value);
+
+		while(1){
+			Setitimer(ITIMER_REAL,&timewait,NULL);
+			recv_count = recv(sock,rcvpkt,HDR_SZ,0);
+
+			if(recv_count<0){
+				if((errno == EINTR && timeout) || errno == ECONNREFUSED) {
+					#ifdef debug
+					std::cerr << "Assuming server got my fin ack" << std::endl;
+					#endif
+					break;
+				}
+				else { 
+					perror("rel_recv : recv"); 
+					exit(1);
+				} 
+			}
+			else if(recv_count >= HDR_SZ && has_seq(rcvpkt,ack_number-1,FIN)){
+				#ifdef debug
+				std::cerr << "Resending FIN ACK" <<std::endl;
+				#endif 
+				uint8_t ack_fin[HDR_SZ];
+				make_pkt(sequence_number,ack_number-1,ACK,NULL,0,ack_fin,HDR_SZ);
+				send(sock,ack_fin,HDR_SZ,0);
+			}
+			else{
+				#ifdef debug
+				std::cerr << "Timewait: Got strange segment, ignoring" <<std::endl;
+				#endif 
+			}
+		}	
+
+		sigaction(SIGALRM,&old,NULL);
+	}
 
 	close(sock);
 }
