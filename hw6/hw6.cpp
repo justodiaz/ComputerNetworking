@@ -17,7 +17,7 @@
 
 #define TIMEWAIT 5000 //for fin ack to server, in milliseconds
 
-#define debug
+//#define debug
 
 uint32_t sequence_number;
 uint32_t ack_number;
@@ -242,7 +242,9 @@ void rel_send_flags(int sock, void *buf, int len, uint8_t flags){
 				send(sock,ack,HDR_SZ,0);
 			}
 			else{//strange packet
+				#ifdef debug
 				std::cerr <<"rel_send_flags: Got unexpected packet"<<std::endl;				
+				#endif
 			}
 		}
 
@@ -279,8 +281,10 @@ int rel_recv_flags(int sock, void * buffer, size_t length, uint8_t flags) {
 	int recv_count = recvfrom(sock, rcvpkt, MAX_PACKET, 0, (struct sockaddr*)&fromaddr, &addrlen);		
 	// this is a shortcut to 'connect' a listening server socket to the incoming client.
 	// after this, we can use send() instead of sendto(), which makes for easier bookkeeping
-	if(connect(sock, (struct sockaddr*)&fromaddr, addrlen)) {
+	if(connect(sock, (struct sockaddr*)&fromaddr, addrlen)){
+		#ifdef debug
 		std::cerr << "couldn't connect socket" << std::endl;
+		#endif
 	}
 
 	while(1){
