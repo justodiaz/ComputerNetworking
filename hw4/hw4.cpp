@@ -484,6 +484,7 @@ int build_SERVFAIL(uint8_t *request, uint8_t *response){
 
 	return sizeof(dns_hdr) + total + (q_count * sizeof(struct dns_query_section));
 }
+
 int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * response, sss * nameservers, int nameserver_count)
 {
   int psize = check_cache(request,response);
@@ -548,7 +549,6 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
     exit(1);
   }
 
-  // await the response - not calling recvfrom, don't care who is responding
   response_size = recv(sock, response, UDP_RECV_SIZE, 0);
 
   bool recvgood = true;
@@ -574,8 +574,8 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	  // 0x0 is NOERROR and 0x3 is NXDOMAIN
 	  else if((ntohs(header->flags) & 0x000F) != 0x0 && (ntohs(header->flags) & 0x000F) != 0x3)
 	  {
-			cerr << "Recv : ERROR : Message reports error" << endl;
-			recvgood = false;
+		cerr << "Recv : ERROR : Message reports error" << endl;
+		recvgood = false;
 	  }
 	  else if(ntohs(header->id) != ntohs(((struct dns_hdr *)request)->id)){
 		cerr << "Recv : ERROR : Returned reponse id doesn't match" << endl;
@@ -815,7 +815,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		
 			//Tried resolving all non-glued name servers, none succeeded
 			if(total<=0) {
-				cerr << "Unglued : ERROR : No name server could be resolved" << endl;
+				cerr << "Unglued : ERROR : No nameserver name could be resolved" << endl;
 				return build_SERVFAIL(request,response);
 			}
 
@@ -829,7 +829,7 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 				return response_size;
 			}
 			else {
-				if(debug) cout << "Wrongly formated request" << endl;
+				if(debug) cout << "Bad format request" << endl;
 				return build_SERVFAIL(request,response);
 			}
 		}
