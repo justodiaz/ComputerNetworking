@@ -19,7 +19,7 @@
 #define DNS_NUM_ANSWERS		0x0002
 #define UDP_RECV_SIZE 1500
 #define PERIOD_SIZE 1
-#define PERIOD "."
+#define PERIOD '.'
 /* DNS header structure. Most of the message is variable
 	 size, which means we can't declare them in this C struct */
 struct dns_hdr {
@@ -85,6 +85,8 @@ int to_dns_style(char* str_name, uint8_t* dns_name)
 	 the first byte of the DNS message.
 	 
 	 Returns the number of bytes of dns_name read.
+	Number of bytes also includes added compression bytes
+	DON'T INTERPRET as string length!!
  */
 int from_dns_style(uint8_t *message, uint8_t* dns_name, char* str_name) {
 	uint8_t part_remainder=0;
