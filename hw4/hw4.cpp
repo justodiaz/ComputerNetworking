@@ -702,7 +702,10 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 	send_retries--;
 
     if(send_count < 0){
-		if(send_retries > 0) sleep(2);
+		if(send_retries > 0) {
+			if(debug) cout << "sleeping after send fail()" << endl;
+			sleep(2);
+		}
 		else{
 			perror("Send");
 			exit(1);
@@ -1063,10 +1066,10 @@ int resolve_name(int sock, uint8_t * request, int packet_size, uint8_t * respons
 		response_size = to_cname_bytes + total;
 	
 		//Pickup from wireshark	
-		if(debug) {
-			sendto(sock, response, response_size, 0, 
-				  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
-		}
+	//	if(debug) {
+	//		sendto(sock, response, response_size, 0, 
+	//			  (struct sockaddr *)chosen_ns, sizeof(struct sockaddr_in6));
+	//	}
 
   }
 
