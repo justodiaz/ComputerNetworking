@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+# Helper function to run the correct / TA server on the given port ($1)
+# with optional test flags ('b' for breaking the protocol, 'h' for hanging
+# in the middle of the protocol).
+#
+# Prints the pid of the running server.
+function run_ta_server {
+  PORT=$1;
+  TEST_MODE=$2;
+  $GRADE_SCRIPT_DIR/server $PORT $TEST_MODE > /dev/null &
+  echo $!;
+}
+
+
+# Helper function to run the correct / TA client on the given port ($1)
+# and host ($2) # with optional test flags ('b' for breaking the protocol, 'h'
+# for hanging in the middle of the protocol) ($3).
+#
+# Prints the pid of the running client
+function run_ta_client {
+  PORT=$1;
+  HOST=$2;
+  TEST_MODE=$3;
+  $GRADE_SCRIPT_DIR/client $HOST $PORT $TEST_MODE > /dev/null &
+  echo $!;
+}
+

@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+
+# All grading scripts assume that we get one argument, and that that
+# argument is a path to a directory with code we should check.  If we
+# don't get an argument, or the argument isn't a path, we can error
+# out quick.
+
+if [[ -z $1 ]]; then
+  printf "Expecting one argument, a path containing code to run and " 1>&2
+  printf "grade.\n" 1>&2
+  exit 1;
+fi;
+
+if [[ ! -d $1 ]]; then
+  printf "Given argument does not appear to be a valid directory to " 1>&2
+  printf "unable to do any meaningful grading bro!\n" 1>&2
+  exit 1;
+fi;
+
+GRADE_SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+source $GRADE_SCRIPT_DIR/helpers;
+source $GRADE_SCRIPT_DIR/hw2_functions;
+SCRIPT_PID=$BASHPID;
+SCRIPT_GPID=`ps -eo pid,pgid| awk -v pid=$SCRIPT_PID '{if ($1==pid){print $2}}'`;
+KILL_CHILDREN="kill_child_procs $SCRIPT_PID $SCRIPT_PID > /dev/null 2> /dev/null";
+EXEC_FILE="play.sh";
+EARNED_POINTS=0;
+POSSIBLE_POINTS=15;
+HOST="127.0.0.1";
+SVR_CORRECT="Server exited successfully";
+
+# Amount of time to wait after starting the server process in the background,
+# to allow it to bind to the port, etc.
+BOOT_TIME=1;
+
+# Maximum number of seconds we'll wait for a student program to complete
+# when we expect things to be working correctly.
+WAIT_TIME=2;
+
+# Amount of time to wait when we want to test that a student program is
+# pausing when the server pauses.
+HANG_TEST_TIME=5;
+
+# "Wrap" timeout so that we always use the kill -9 option
+TIMEOUT="timeout --signal=9";
+
+
+cd $1;
+
+# If there is a make file in the current directory, try and clear things
+# out, and then make things again.
+if [ -f 'Makefile' ]; then
+  make clean > /dev/null;
+  make > /dev/null;
+  make all > /dev/null;
+fi;
+
+
+# echo "Basic Tests";
+# echo "===";
+# 
+# # For the first point, we just need to see if there is a test running program
+# # an that it is executable.  If not, than we can stop and not go any further.
+# if [[ ! -x $EXEC_FILE ]]; then
+#   echo "0 / 1: $EXEC_FILE either does not exist or is not executable.";
+#   echo "---";
+#   echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+#   exit 0;
+# fi;
+# 
+# echo "1 / 1: $EXEC_FILE exists and is executable.";
+# EARNED_POINTS=$(($EARNED_POINTS + 1));
+# 
+# # Next, check and see if when we try to execute the program in server mode
+# # with a random high port, we get a program actually listening on that
+# # port.
+# TEST_2_POINTS=1;
+# TEST_2_PORT=`rand_high_port`;
+# ./$EXEC_FILE server $HOST $TEST_2_PORT 2> /dev/null > /dev/null &
+# TEST_2_PID=$!;
+# sleep $WAIT_TIME;
+# PROG_ON_PORT=`is_port_used $TEST_2_PORT`;
+# if [[ `is_port_used $TEST_2_PORT` ]]; then
+#   echo "1 / $TEST_2_POINTS: $EXEC_FILE resulted in a program listening on that port.";
+#   EARNED_POINTS=$(($EARNED_POINTS + $TEST_2_POINTS));
+# else
+#   echo "0 / $TEST_2_POINTS: $EXEC_FILE did not result in a program listening that port.";
+# fi;
+# 
+# $KILL_CHILDREN;
+# 
+# 
+# echo "";
+# echo "Correct Functioning Tests";
+# echo "===";
+# 
+# # The next test sees if the protocol functions correctly when I run my server
+# # with two instances of the student / test client
+# CORRECT_FUNC_POINTS=3;
+# TEST_3_PORT=`rand_high_port`;
+# TEST_3_TMP_FILE="/tmp/hw2-$TEST_3_PORT";
+# $GRADE_SCRIPT_DIR/server $TEST_3_PORT > $TEST_3_TMP_FILE &
+# TEST_3_SERVER_PID=$!;
+# sleep $BOOT_TIME;
+# TEST_3_CLIENT_CMD="./$EXEC_FILE client $HOST $TEST_3_PORT";
+# $TEST_3_CLIENT_CMD > /dev/null &
+# TEST_3_CLIENT_1_PID=$!;
+# $TEST_3_CLIENT_CMD > /dev/null &
+# TEST_3_CLIENT_2_PID=$!;
+# 
+# # Since the server and both clients are all background processes, we're
+# # not blocking on anything.  We need to pause and let the background
+# # processes try and complete.
+# sleep $WAIT_TIME;
+# 
+# # First, see if the client script exited with status code 0, and not
+# # some error code or the timeout error
+# SERVER_RAN_CORRECT=`cat $TEST_3_TMP_FILE | grep 'Server exited successfully'`;
+# if [[ -z $SERVER_RAN_CORRECT ]]; then
+#   echo "0 / $CORRECT_FUNC_POINTS: Game did not run correctly with TA server and two student clients.";
+# else
+#   echo "$CORRECT_FUNC_POINTS / $CORRECT_FUNC_POINTS: Game ran correctly with TA server and two student clients.";
+#   EARNED_POINTS=$(($EARNED_POINTS + $CORRECT_FUNC_POINTS));
+# fi;
+# 
+# # And clean up any processes that might still be sticking around after
+# # test 3 finishes.
+# $KILL_CHILDREN;
+# rm $TEST_3_TMP_FILE 2> /dev/null
+# 
+# 
+# # Next, see if the protocol runs correctly with two TA clients and one student
+# # server.
+# TEST_4_PORT=`rand_high_port`;
+# TEST_4_SERVER_CMD="./$EXEC_FILE server $HOST $TEST_4_PORT";
+# $TEST_4_SERVER_CMD > /dev/null &
+# TEST_4_SERVER_PID=$!;
+# # Give the server a moment to bind to things
+# sleep $BOOT_TIME;
+# TEST_4_CLIENT_CMD="$GRADE_SCRIPT_DIR/client $HOST $TEST_4_PORT";
+# $TIMEOUT $WAIT_TIME $TEST_4_CLIENT_CMD > /dev/null 2> /dev/null &
+# $TIMEOUT $WAIT_TIME $TEST_4_CLIENT_CMD > /dev/null 2> /dev/null
+# 
+# # If the TA client exited correctly, then we can be confident that the entire
+# # protocol was run correctly.
+# if [[ $? -ne 0 ]]; then
+#   echo "0 / $CORRECT_FUNC_POINTS: Game did not run correctly with student server and two TA clients.";
+# else
+#   echo "$CORRECT_FUNC_POINTS / $CORRECT_FUNC_POINTS: Game ran correctly with student server and two TA clients.";
+#   EARNED_POINTS=$(($EARNED_POINTS + $CORRECT_FUNC_POINTS));
+# fi;
+# 
+# $KILL_CHILDREN;
+# 
+# # Finally, check and make sure that the game runs correctly with TA server,
+# # one TA client, and a student client (this should be basically free points
+# # if the above points worked out).
+# TEST_5_PORT=`rand_high_port`;
+# TEST_5_SERVER_PID=`run_ta_server $TEST_5_PORT`;
+# sleep $BOOT_TIME;
+# TEST_5_CLIENT_CMD="./$EXEC_FILE client $HOST $TEST_5_PORT";
+# $TEST_5_CLIENT_CMD > /dev/null &
+# TEST_5_CLIENT_1_PID=$!;
+# $TIMEOUT $WAIT_TIME $GRADE_SCRIPT_DIR/client $HOST $TEST_5_PORT > /dev/null 2> /dev/null;
+# 
+# # If the TA client exited correctly, then we can be confident that the student's
+# # client ran successfully too.
+# if [[ $? -ne 0 ]]; then
+#   echo "0 / $CORRECT_FUNC_POINTS: Game did not run correctly with TA server and client, and one student client.";
+# else
+#   echo "$CORRECT_FUNC_POINTS / $CORRECT_FUNC_POINTS: Game ran correctly with TA server and client, and one student client.";
+#   EARNED_POINTS=$(($EARNED_POINTS + $CORRECT_FUNC_POINTS));
+# fi;
+# 
+# $KILL_CHILDREN;
+# 
+# 
+# echo "";
+# echo "Incorrect Functioning Tests";
+# echo "===";
+# 
+# INCORRECT_FUNC_POINTS=1;
+# 
+# # Check that the student client exits with exit code "1" when the TA server
+# # breaks protocol.
+# TEST_6_PORT=`rand_high_port`;
+# TEST_6_SERVER_PID=`run_ta_server $TEST_6_PORT b`;
+# sleep $BOOT_TIME;
+# TEST_6_CLIENT_1_PID=`run_ta_client $TEST_6_PORT $HOST`;
+# TEST_6_CLIENT_CMD="./$EXEC_FILE client $HOST $TEST_6_PORT";
+# $TIMEOUT $WAIT_TIME $TEST_6_CLIENT_CMD > /dev/null 2> /dev/null;
+# 
+# # Since the server is not running the protocol correctly, then the "correct"
+# # thing for the client to do is exit with exit code 1.
+# if [[ $? -ne 1 ]]; then
+#   echo "0 / $INCORRECT_FUNC_POINTS: Student client did not exit with code 1 when TA server broke protocol.";
+# else
+#   echo "$INCORRECT_FUNC_POINTS / $INCORRECT_FUNC_POINTS: Student client successfully exited with code 1 when TA server broke protocol.";
+#   EARNED_POINTS=$(($EARNED_POINTS + $INCORRECT_FUNC_POINTS));
+# fi;
+# 
+# $KILL_CHILDREN;
+
+
+# Next test is to see if the student server correctly exits when one with
+# one correctly running TA client, and one protocol-breaking client
+TEST_7_PORT=`rand_high_port`;
+TEST_7_TMP_FILE="/tmp/hw2-$TEST_7_PORT";
+TEST_7_SERVER_CMD="./$EXEC_FILE server $HOST $TEST_7_PORT";
+# In order to capture the exit status of the server background task, we
+# spawn a new bash instance that executes the server command and dumps the
+# exit status to a temp file.
+TEST_7_BASH_CMD="$TEST_7_SERVER_CMD > /dev/null; echo \$?";
+echo $TEST_7_BASH_CMD | bash > $TEST_7_TMP_FILE &
+TEST_7_SERVER_PID=$!;
+sleep $BOOT_TIME;
+TEST_7_CLIENT_1_PID=`run_ta_client $TEST_7_PORT $HOST`;
+TEST_7_CLIENT_2_PID=`run_ta_client $TEST_7_PORT $HOST b`;
+TEST_7_SERVER_EXIT_RESULT=`cat $TEST_7_TMP_FILE`;
+$INCORRECT_FUNC_POINTS=1
+
+echo "Result fo server exit: $TEST_7_SERVER_EXIT_RESULT";
+echo $TEST_7_SERVER_EXIT_RESULT;
+
+if [[ $TEST_7_SERVER_EXIT_RESULT -ne "1" ]]; then
+  echo "0 / $INCORRECT_FUNC_POINTS: Student server did not exit with status 1 when TA client broke protocol.";
+else
+  echo "$INCORRECT_FUNC_POINTS / $INCORRECT_FUNC_POINTS: Student server successfully exited with status 1 when TA client broke protocol.";
+  EARNED_POINTS=$(($EARNED_POINTS + $INCORRECT_FUNC_POINTS));
+fi;
+
+$KILL_CHILDREN;
+rm $TEST_7_TMP_FILE 2> /dev/null
+exit
+
+
+# Next, check and make sure that the student client hangs when the TA server
+# stops talking / hangs in the middle of the protocol
+TEST_8_PORT=`rand_high_port`;
+TEST_8_SERVER_PID=`run_ta_server $TEST_8_PORT h`;
+sleep $BOOT_TIME;
+TEST_8_CLIENT_1_PID=`run_ta_client $TEST_8_PORT $HOST`;
+TEST_8_CLIENT_CMD="./$EXEC_FILE client $HOST $TEST_8_PORT";
+$TIMEOUT $HANG_TEST_TIME $TEST_8_CLIENT_CMD > /dev/null 2> /dev/null;
+
+# Since we want the client program to timeout here, the expected error code is
+# 137, which is what timeout returns when it kills the given command.
+if [[ $? -ne 137 ]]; then
+  echo "0 / $INCORRECT_FUNC_POINTS: Student client did not hang for at least $HANG_TEST_TIME seconds when the TA server went silent mid protocol.";
+else
+  echo "$INCORRECT_FUNC_POINTS / $INCORRECT_FUNC_POINTS: Student client successfully hung for $HANG_TEST_TIME seconds when the TA server went silent mid protocol.";
+  EARNED_POINTS=$(($EARNED_POINTS + $INCORRECT_FUNC_POINTS));
+fi;
+
+$KILL_CHILDREN;
+
+
+# Next, check and make sure that the student server correctly hangs / stops
+# talking when one of the TA's clients goes silent mid-protocol.
+#
+# We test this by just making sure there is a program with the student
+# server's pid running after 5 seconds.
+TEST_9_PORT=`rand_high_port`;
+TEST_9_SERVER_CMD="./$EXEC_FILE server $HOST $TEST_9_PORT";
+$TEST_9_SERVER_CMD > /dev/null &
+TEST_9_SERVER_PID=$!;
+sleep $BOOT_TIME;
+TEST_9_CLIENT_1_PID=`run_ta_client $TEST_9_PORT $HOST`;
+TEST_9_CLIENT_2_PID=`run_ta_client $TEST_9_PORT $HOST h`;
+
+sleep $HANG_TEST_TIME;
+if [ ! -d "/proc/$TEST_9_SERVER_PID" ]; then
+  echo "0 / $INCORRECT_FUNC_POINTS: Student server did not hang for at least $HANG_TEST_TIME seconds when a TA client went silent mid protocol.";
+else
+  echo "$INCORRECT_FUNC_POINTS / $INCORRECT_FUNC_POINTS: Student server successfully hung for $HANG_TEST_TIME seconds when a TA client went silent mid protocol.";
+  EARNED_POINTS=$(($EARNED_POINTS + $INCORRECT_FUNC_POINTS));
+fi;
+
+$KILL_CHILDREN;
+
+
+echo "";
+echo "Bonus Point";
+echo "===";
+
+# For a bonus point, see if we can talk to the student server, with one TA
+# client talking IPv6, and another TA client talking IPv4
+BONUS_POINTS=1;
+TEST_10_PORT=`rand_high_port`;
+TEST_10_SERVER_CMD="./$EXEC_FILE server $HOST $TEST_10_PORT";
+$TEST_10_SERVER_CMD > /dev/null &
+TEST_10_SERVER_PID=$!;
+sleep $BOOT_TIME;
+TEST_10_CLIENT_1_PID=`run_ta_client $TEST_10_PORT $HOST`;
+$TIMEOUT $WAIT_TIME $GRADE_SCRIPT_DIR/client ::1 $TEST_10_PORT > /dev/null 2> /dev/null;
+
+if [[ $? -ne 0 ]]; then
+  echo "0 / $BONUS_POINTS: Game was not completed within $WAIT_TIME seconds with student server, one TA client connecting over IPv4, and a second TA client connecting over IPv6.";
+else
+  echo "$BONUS_POINTS / $BONUS_POINTS: Game was successfully completed within $WAIT_TIME seconds with student server, one TA client connecting over IPv4, and a second TA client connecting over IPv6.";
+  EARNED_POINTS=$(($EARNED_POINTS + $BONUS_POINTS));
+fi;
+
+$KILL_CHILDREN;
+
+
+echo "";
+echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+exit 0 > /dev/null 2> /dev/null;

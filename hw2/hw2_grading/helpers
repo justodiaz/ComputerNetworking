@@ -1,0 +1,49 @@
+# Helper function to see if anything is listening on the given port ($1).
+# Prints 1 if the port is being used, and 0 otherwise;
+function is_port_used {
+  TEST_PORT=$1;
+  MATCHING_PROG=`netstat -lnt | grep $TEST_PORT | grep LISTEN`;
+  if [[ $MATCHING_PROG ]]; then
+    echo "1";
+  else
+    echo "0";
+  fi;
+}
+
+
+# Helper function to choose a random high level port that is currently
+# not being listened to
+function rand_high_port {
+  FOUND_PORT=0;
+  while [[ 1 ]]; do
+    RAND_PORT=$(($RANDOM * 2));
+    # First check that the port is sufficiently high
+    if [[ $RAND_PORT -lt 1024 ]]; then
+      continue;
+    fi;
+
+    # Next, also check and make sure that nothing is currently listening
+    # to this port.
+    LISTENING_PROG=`is_port_used $RAND_PORT`;
+    if [[ $LISTENING_PROG -eq 0 ]]; then
+      FOUND_PORT=$RAND_PORT;
+      break;
+    fi;
+  done;
+
+  echo $FOUND_PORT;
+}
+
+
+function kill_child_procs {
+  CUR_PID=$1;
+  CUR_GPID=$2;
+  PIDS_IN_GROUP=`ps -eo pid,pgid,ppid | awk -v gpid=$CUR_GPID -v ppid=$CUR_PID '{if ($2==gpid || $3==ppid){print $1}}'`;
+  for A_PID in $PIDS_IN_GROUP; do
+    if [[ $A_PID != $CUR_PID ]]; then
+      kill $A_PID 2> /dev/null;
+      wait $A_PID 2> /dev/null;
+    fi;
+  done;
+}
+
