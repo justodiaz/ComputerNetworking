@@ -1,0 +1,128 @@
+Record lookups without querying a recursive nameserver
+===
+
+For each of these tests, I issued the given query against your server.  If
+your server responded with the expected answer in less than 5 seconds,
+I then also checked the requests your server sent over the network and checked
+that they were similar to what was expected (I very loosely checked this
+by seeing if your server issued the # of queries I expected.  I didn't
+actually check the content of those queries).
+
+
+Question 1
+---
+I queried "grc.com" against your server.  I then made sure that you returned
+the expected answer, "4.79.142.200 and made at least 3 queries.  Example
+correct traffic should give something like the below
+	dig @198.41.0.4 grc.com
+	dig @m.gtld-servers.net grc.com
+	dig @ns4.customer.level3.net grc.com
+	grc.com.        28800   IN  A   4.79.142.200
+
+Question 2
+---
+I queried "www.internic.net", checked that it gave "192.0.32.9" in at least
+7 queries, eg:
+	dig @198.41.0.4 www.internic.net
+	dig @m.gtld-servers.net www.internic.net
+	dig @ns1.crsnic.net www.internic.net
+	Gives CNAME internicwww.vip.icann.org
+
+	dig @198.41.0.4 internicwww.vip.icann.org
+	dig @d0.org.afilias-nst.org. internicwww.vip.icann.org
+	dig @b.iana-servers.net. internicwww.vip.icann.org
+	dig @gtm1.lax.icann.org internicwww.vip.icann.org
+	internicwww.vip.icann.org. 30   IN      A       192.0.32.9
+
+Question 3
+---
+Queried "www.yahoo.com.tw" and checked that "74.6.50.150" was returned in
+at least 10 queries.
+	dig @198.41.0.4 www.yahoo.com.tw
+	dig @i.dns.tw www.yahoo.com.tw
+	dig @ns5.yahoo.com www.yahoo.com.tw
+	Gives CNAME rc.yahoo.com
+
+	dig @198.41.0.4 rc.yahoo.com
+	dig @m.gtld-servers.net rc.yahoo.com
+	dig @ns1.yahoo.com rc.yahoo.com	
+	Gives CNAME src.g03.yahoodns.net
+
+	dig @198.41.0.4 src.g03.yahoodns.net
+	dig @m.gtld-servers.net src.g03.yahoodns.net
+	dig @ns1.yahoo.com src.g03.yahoodns.net
+	dig @yf3.a1.b.yahoo.net src.g03.yahoodns.net
+	src.g03.yahoodns.net.   300     IN      A       74.6.50.150
+
+Question 4
+---
+Queried "ds.v6ns.test-ipv6.com" gets to "216.218.228.119" in at least 4 queries
+	dig @2001:503:BA3E::2:30 ds.v6ns.test-ipv6.com
+	dig @a.gtld-servers.net ds.v6ns.test-ipv6.com
+	dig @ns1.test-ipv6.com ds.v6ns.test-ipv6.com
+	dig @v6ns1.test-ipv6.com ds.v6ns.test-ipv6.com
+	ds.v6ns.test-ipv6.com.  360     IN      A       216.218.228.119
+
+
+Caching Tests
+===
+
+Question 5
+---
+I first queried "grc.com" and checked that you gave the correct response,
+ignoring whatever information was sent over the wire by your server.  Then,
+I ran the query again and checked that your server gave the correct result
+again, but did not generate any additional network traffic.
+
+Question 6
+---
+I first queried "cs.uic.edu" and checked that your server gave the right
+response.  Then, I queried "econ.uic.edu" and checked that your server
+only sent one additional query over the network (again I didn't go so far
+as to actually check the bodies of the queries, only the #).
+
+	dig @198.41.0.4 cs.uic.edu
+	dig @l.edu-servers.net cs.uic.edu
+	dig @uic-dns2.uic.edu cs.uic.edu
+	cs.uic.edu.             47950   IN      A       131.193.32.29
+
+    Then	
+
+	dig @uic-dns2.uic.edu econ.uic.edu
+	econ.uic.edu.		86400	IN	A	131.193.206.16
+
+Serving Multiple Requests
+===
+
+Question 7
+---
+I started your server, and then queried "grc.com" 10 times in parallel.  I
+then checked the combined output of each request and checked to make sure that
+it contained the correct answer 10 times.  Your server was given 5 seconds
+to respond to all queries.
+
+
+Error Handling
+===
+
+Question 8
+---
+On my test machine I blocked all outgoing UDP traffic to port 53.  I then
+queried the student server once and waited a second.  Then I removed the block
+and reissued the query for "cs.uic.edu" and checked that I was given the right
+answer.
+
+Question 9
+---
+I replaced the given list of good root servers with a new list of 2 addresses,
+the first being a server that doesn't have a DNS server running on it,
+and the second being a true DNS root server.  I then queried the student's
+server with "fsf.org" and checked that I got "208.118.235.131" back in
+6 seconds or less.
+
+Question 10
+---
+I replaced the list of root servers students were given with another new
+list of two addresses (both of which did not speak DNS).  I then queried
+the student's server for "noscript.net" and checked that I got "SERVFAIL"
+back in the student's reply within 10 seconds.

@@ -1,0 +1,364 @@
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.yahoo.com.tw
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 25028
+;; flags: qr aa ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.yahoo.com.tw.		IN	A
+
+;; ANSWER SECTION:
+www.yahoo.com.tw.	7200	IN	CNAME	rc.yahoo.com.
+rc.yahoo.com.		300	IN	CNAME	src.g03.yahoodns.net.
+src.g03.yahoodns.net.	300	IN	A	74.6.50.150
+
+;; Query time: 1590 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:51 CDT 2015
+;; MSG SIZE  rcvd: 142
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.yahoo.co.in
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 4691
+;; flags: qr aa ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.yahoo.co.in.		IN	A
+
+;; ANSWER SECTION:
+www.yahoo.co.in.	300	IN	CNAME	rc.yahoo.com.
+rc.yahoo.com.		300	IN	CNAME	src.g03.yahoodns.net.
+src.g03.yahoodns.net.	300	IN	A	74.6.50.150
+
+;; Query time: 325 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:51 CDT 2015
+;; MSG SIZE  rcvd: 141
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.yahoo.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 57169
+;; flags: qr aa ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.yahoo.com.			IN	A
+
+;; ANSWER SECTION:
+www.yahoo.com.		300	IN	CNAME	fd-fp3.wg1.b.yahoo.com.
+fd-fp3.wg1.b.yahoo.com.	60	IN	A	98.139.183.24
+fd-fp3.wg1.b.yahoo.com.	60	IN	A	98.138.253.109
+fd-fp3.wg1.b.yahoo.com.	60	IN	A	98.139.180.149
+fd-fp3.wg1.b.yahoo.com.	60	IN	A	98.138.252.30
+
+;; Query time: 360 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:52 CDT 2015
+;; MSG SIZE  rcvd: 210
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.microsoft.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 35326
+;; flags: qr aa ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.microsoft.com.		IN	A
+
+;; ANSWER SECTION:
+www.microsoft.com.	3600	IN	CNAME	toggle.www.ms.akadns.net.
+toggle.www.ms.akadns.net. 300	IN	CNAME	www.microsoft.com-c.edgekey.net.
+www.microsoft.com-c.edgekey.net. 21600 IN CNAME	www.microsoft.com-c.edgekey.net.globalredir.akadns.net.
+www.microsoft.com-c.edgekey.net.globalredir.akadns.net.	3600 IN	CNAME e10088.dspb.akamaiedge.net.
+e10088.dspb.akamaiedge.net. 20	IN	A	23.72.44.137
+
+;; Query time: 1120 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:53 CDT 2015
+;; MSG SIZE  rcvd: 377
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.apple.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56627
+;; flags: qr aa ra; QUERY: 1, ANSWER: 4, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.apple.com.			IN	A
+
+;; ANSWER SECTION:
+www.apple.com.		1800	IN	CNAME	www.isg-apple.com.akadns.net.
+www.isg-apple.com.akadns.net. 60 IN	CNAME	www.apple.com.edgekey.net.
+www.apple.com.edgekey.net. 600	IN	CNAME	e3191.dscc.akamaiedge.net.
+e3191.dscc.akamaiedge.net. 20	IN	A	23.72.74.221
+
+;; Query time: 834 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:54 CDT 2015
+;; MSG SIZE  rcvd: 245
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.linkedin.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 17213
+;; flags: qr aa ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.linkedin.com.		IN	A
+
+;; ANSWER SECTION:
+www.linkedin.com.	300	IN	CNAME	glb-any-na.www.linkedin.com.
+glb-any-na.www.linkedin.com. 300 IN	CNAME	any-na.www.linkedin.com.
+any-na.www.linkedin.com. 3600	IN	A	108.174.10.10
+
+;; Query time: 507 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:54 CDT 2015
+;; MSG SIZE  rcvd: 162
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.facebook.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 786
+;; flags: qr aa ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.facebook.com.		IN	A
+
+;; ANSWER SECTION:
+www.facebook.com.	3600	IN	CNAME	star.c10r.facebook.com.
+star.c10r.facebook.com.	60	IN	A	173.252.74.22
+
+;; Query time: 369 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:55 CDT 2015
+;; MSG SIZE  rcvd: 96
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.internic.net
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 41465
+;; flags: qr aa ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.internic.net.		IN	A
+
+;; ANSWER SECTION:
+www.internic.net.	600	IN	CNAME	internicwww.vip.icann.org.
+internicwww.vip.icann.org. 30	IN	A	192.0.32.9
+
+;; Query time: 433 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:55 CDT 2015
+;; MSG SIZE  rcvd: 114
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.uic.edu
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 9611
+;; flags: qr aa ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.uic.edu.			IN	A
+
+;; ANSWER SECTION:
+www.uic.edu.		900	IN	CNAME	www-proxy-prod.cc.uic.edu.
+www-proxy-prod.cc.uic.edu. 7200	IN	A	128.248.155.15
+
+;; Query time: 331 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:55 CDT 2015
+;; MSG SIZE  rcvd: 102
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.cs.uic.edu
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 10812
+;; flags: qr aa ra; QUERY: 1, ANSWER: 1, AUTHORITY: 2, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;www.cs.uic.edu.			IN	A
+
+;; ANSWER SECTION:
+www.cs.uic.edu.		86400	IN	A	131.193.32.29
+
+;; AUTHORITY SECTION:
+cs.uic.edu.		86400	IN	NS	garcon.eecs.uic.edu.
+cs.uic.edu.		86400	IN	NS	fred.eecs.uic.edu.
+
+;; ADDITIONAL SECTION:
+fred.eecs.uic.edu.	86400	IN	A	131.193.40.254
+garcon.eecs.uic.edu.	86400	IN	A	131.193.32.254
+
+;; Query time: 187 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:56 CDT 2015
+;; MSG SIZE  rcvd: 136
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 nibbles.cs.uic.edu
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56705
+;; flags: qr aa ra; QUERY: 1, ANSWER: 1, AUTHORITY: 2, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;nibbles.cs.uic.edu.		IN	A
+
+;; ANSWER SECTION:
+nibbles.cs.uic.edu.	86400	IN	A	131.193.34.150
+
+;; AUTHORITY SECTION:
+cs.uic.edu.		86400	IN	NS	fred.eecs.uic.edu.
+cs.uic.edu.		86400	IN	NS	garcon.eecs.uic.edu.
+
+;; ADDITIONAL SECTION:
+fred.eecs.uic.edu.	86400	IN	A	131.193.40.254
+garcon.eecs.uic.edu.	86400	IN	A	131.193.32.254
+
+;; Query time: 187 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:56 CDT 2015
+;; MSG SIZE  rcvd: 140
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.domain.invalid
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 37114
+;; flags: qr aa ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1472
+;; QUESTION SECTION:
+;www.domain.invalid.		IN	A
+
+;; AUTHORITY SECTION:
+.			86400	IN	SOA	a.root-servers.net. nstld.verisign-grs.com. 2015101900 1800 900 604800 86400
+
+;; Query time: 73 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:56 CDT 2015
+;; MSG SIZE  rcvd: 122
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 nonexistent.kaytwo.org
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 6666
+;; flags: qr aa ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 512
+;; QUESTION SECTION:
+;nonexistent.kaytwo.org.		IN	A
+
+;; AUTHORITY SECTION:
+kaytwo.org.		86400	IN	SOA	dee.ns.cloudflare.com. dns.cloudflare.com. 2019662330 10000 2400 604800 3600
+
+;; Query time: 660 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:23:57 CDT 2015
+;; MSG SIZE  rcvd: 112
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 63425
+;; flags: qr aa ra; QUERY: 1, ANSWER: 1, AUTHORITY: 3, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;www.thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com. IN A
+
+;; ANSWER SECTION:
+www.thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com. 36000 IN A 94.126.42.50
+
+;; AUTHORITY SECTION:
+thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com. 259200 IN NS ns1.nothingtoseehere.org.
+thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com. 259200 IN NS ns0.nothingtoseehere.org.
+thelongestdomainnameintheworldandthensomeandthensomemoreandmore.com. 259200 IN NS ns0.firedrake.org.
+
+;; ADDITIONAL SECTION:
+ns0.nothingtoseehere.org. 3600	IN	A	94.126.42.51
+ns1.nothingtoseehere.org. 3600	IN	A	94.126.42.50
+
+;; Query time: 3127 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:24:05 CDT 2015
+;; MSG SIZE  rcvd: 232
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 ds.v6ns.test-ipv6.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 48993
+;; flags: qr aa ra; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 2
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4096
+;; QUESTION SECTION:
+;ds.v6ns.test-ipv6.com.		IN	A
+
+;; ANSWER SECTION:
+ds.v6ns.test-ipv6.com.	360	IN	A	216.218.228.119
+
+;; AUTHORITY SECTION:
+v6ns.test-ipv6.com.	360	IN	NS	v6ns1.test-ipv6.com.
+
+;; ADDITIONAL SECTION:
+v6ns1.test-ipv6.com.	360	IN	AAAA	2001:470:1:18::119
+
+;; Query time: 325 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:24:05 CDT 2015
+;; MSG SIZE  rcvd: 114
+
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 ipv6.google.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: SERVFAIL, id: 57419
+;; flags: qr ra; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;ipv6.google.com.		IN	A
+
+;; Query time: 395 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Mon Oct 19 02:24:05 CDT 2015
+;; MSG SIZE  rcvd: 33
+

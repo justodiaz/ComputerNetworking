@@ -1,0 +1,433 @@
+#!/usr/bin/env bash
+
+# All grading scripts assume that we get one argument, and that that
+# argument is a path to a directory with code we should check.  If we
+# don't get an argument, or the argument isn't a path, we can error
+# out quick.
+
+if [[ -z $1 ]]; then
+    printf "Expecting one argument, a path containing code to run and " 1>&2
+    printf "grade.\n" 1>&2
+    exit 1;
+fi;
+
+if [[ ! -d $1 ]]; then
+    mkdir $1;
+fi;
+
+GRADE_SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+source $GRADE_SCRIPT_DIR/helpers;
+STUDENT_FILE="hw4.sh";
+STUDENT_CMD="$STUDENT_FILE -p"; 
+HOST="localhost";
+EARNED_POINTS=0;
+POSSIBLE_POINTS=25;
+ORIG_ROOT_SERVERS_FILE="root-servers.txt";
+BACKUP_ROOT_SERVERS_FILE="root-servers.txt.bak";
+MAX_TIME=5;
+# SINGLE_TEST=6;
+
+iptables -D OUTPUT -p udp --dport 53 -j DROP 2> /dev/null;
+
+function check_queries_in_dump {
+    local NUM_EX_QS=$1;
+    local DUMP_FILE=$2;
+    local NUM_FOUND_QS=`cat $DUMP_FILE | grep sendto | grep -v 127.0.0.1 | wc -l`;
+
+    echo "  -  Expected to see $NUM_EX_QS network requests" > /dev/stderr;
+    echo "  -  Actually found $NUM_FOUND_QS network requests" > /dev/stderr;
+
+    if [[ $NUM_FOUND_QS -lt $NUM_EX_QS ]]; then
+        echo "1";
+        exit;
+    fi;
+
+    echo "0";
+}
+
+
+function start_student_cmd {
+    local STUDENT_PORT=`rand_high_port`;
+    local DUMP_FILE="/tmp/hw4-$RANDOM.dump";
+    # echo "strace -e trace=network -q -f -o $DUMP_FILE -s 1000 ./$STUDENT_CMD $STUDENT_PORT" > /dev/stderr;
+    strace -e trace=network -q -f -o $DUMP_FILE -s 1000 ./$STUDENT_CMD $STUDENT_PORT > /dev/null &
+    sleep 1;
+    echo "$!:$STUDENT_PORT:$DUMP_FILE";
+}
+
+
+function cleanup_student_cmd {
+    local STUDENT_PARTS=$1;
+    local STUDENT_PID=`echo $STUDENT_PARTS | awk -F: '{print $1}'`;
+    local STUDENT_PORT=`echo $STUDENT_PARTS | awk -F: '{print $2}'`;
+    local STUDENT_FILE=`echo $STUDENT_PARTS | awk -F: '{print $3}'`;
+
+    kill_proc_tree $STUDENT_PID;
+    if [[ -f $STUDENT_FILE ]]; then
+        rm $STUDENT_FILE;
+    fi;
+}
+
+
+function format_test_fail_message {
+    local TEST_RESULT=$1;
+    if [[ $TEST_RESULT -eq "1" ]]; then
+        echo "returned DNS result was incorrect or did not complete successfully in $MAX_TIME seconds.";
+    else
+        echo "generated DNS traffic does not match expected recursive traffic.";
+    fi;
+}
+
+
+# Return 0 if everything looks good, 1 if the DNS query was answered
+# incorrectly by the student's resolver, and 2 if the network traffic looks
+# fishy / incorrect
+function test_student_server {
+
+    local QUERY=$1;
+    local EXPECTED_Q_RESULT=$2;
+    local EXPECTED_SUB_QUERIES=$3;
+
+    local STUDENT_PARTS=`start_student_cmd`;
+    local STUDENT_PID=`echo $STUDENT_PARTS | awk -F: '{print $1}'`;
+    local STUDENT_PORT=`echo $STUDENT_PARTS | awk -F: '{print $2}'`;
+    local STUDENT_FILE=`echo $STUDENT_PARTS | awk -F: '{print $3}'`;
+    local STUDENT_OUTPUT=`timeout $MAX_TIME dig @$HOST -p $STUDENT_PORT $QUERY`;
+
+    #  echo "dig @$HOST -p $STUDENT_PORT $QUERY" > /dev/stderr;
+    #  echo "Received: " > /dev/stderr;
+    #  echo $STUDENT_OUTPUT > /dev/stderr;
+    #  echo "Want: " > /dev/stderr;
+    #  echo $EXPECTED_Q_RESULT > /dev/stderr;
+
+    local FOUND_EXPECTED_RESULT=`echo $STUDENT_OUTPUT | grep $EXPECTED_Q_RESULT`;
+
+    kill_proc_tree $STUDENT_PID;
+
+    local DUMP_Q_RESULT=`check_queries_in_dump $EXPECTED_SUB_QUERIES $STUDENT_FILE`;
+
+    if [[ -f $STUDENT_FILE ]]; then
+        rm $STUDENT_FILE;
+    fi;
+
+    if [[ -z $FOUND_EXPECTED_RESULT ]]; then
+        echo 1;
+    elif [[ $DUMP_Q_RESULT == "1" ]]; then
+        echo 2;
+    else
+        echo 0;
+    fi;
+}
+
+
+cd $1;
+
+# If there is a make file in the current directory, try and clear things
+# out, and then make things again.
+if [ -f 'Makefile' ] || [ -f 'makefile' ]; then
+    make clean > /dev/null;
+    make > /dev/null;
+    make all > /dev/null;
+fi;
+
+
+echo "Basic Tests";
+echo "---";
+
+# For the first point, we just need to see if there is a test running program
+# an that it is executable.  If not, than we can stop and not go any further.
+if [[ ! -x $STUDENT_FILE ]]; then
+    echo "$STUDENT_FILE either does not exist or is not executable.";
+    echo "---";
+    echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+    exit 0;
+fi;
+
+echo "$STUDENT_FILE exists and is executable.";
+
+BASIC_TEST_PORT=`rand_high_port`;
+TEST_CMD="$STUDENT_CMD $BASIC_TEST_PORT";
+./$TEST_CMD > /dev/null 2> /dev/null &
+TEST_CMD_PID=$!;
+sleep 1;
+BASIC_TEST_RS=`is_port_used $BASIC_TEST_PORT`;
+if [[ $BASIC_TEST_RS -eq 0 ]]; then
+    echo "Running $TEST_CMD did not result in a process listening on port $BASIC_TEST_PORT.";
+    echo "---";
+    echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+    exit 0;
+fi;
+kill_proc_tree $TEST_CMD_PID;
+
+echo "$TEST_CMD resulted in a process listening on port $BASIC_TEST_PORT.";
+echo "";
+
+echo "Record lookups without querying a recursive nameserver";
+echo "---";
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 1 ]]; then
+    T1_POINTS=10;
+    T1_Q="grc.com";
+    T1_EX_RS="4.79.142.200";
+    T1_NUM_QS=3;
+    T1_RESULT=`test_student_server $T1_Q $T1_EX_RS $T1_NUM_QS`;
+    if [[ $T1_RESULT -eq 0 ]]; then
+        echo "$T1_POINTS / $T1_POINTS: Successfully fetched $T1_EX_RS for $T1_Q.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T1_POINTS));
+    else
+        echo "0 / $T1_POINTS: With query, $T1_Q, `format_test_fail_message $T1_RESULT`";
+    fi;
+fi;
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 2 ]]; then
+    T2_POINTS=2;
+    T2_Q="www.internic.net";
+    T2_EX_RS="192.0.32.9";
+    T2_NUM_QS=7;
+    T2_RESULT=`test_student_server $T2_Q $T2_EX_RS $T2_NUM_QS`;
+    if [[ $T2_RESULT -eq 0 ]]; then
+        echo "$T2_POINTS / $T2_POINTS: Successfully fetched IP for CNAME'ed item $T2_Q.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T2_POINTS));
+    else
+        echo "0 / $T2_POINTS: With CNAME'ed domain $T2_Q, `format_test_fail_message $T2_RESULT`";
+    fi;
+fi;
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 3 ]]; then
+    T3_POINTS=2;
+    T3_Q="www.yahoo.com.tw";
+    T3_EX_RS="74.6.50.150";
+    T3_NUM_QS=10;
+    T3_RESULT=`test_student_server $T3_Q $T3_EX_RS $T3_NUM_QS`;
+    if [[ $T3_RESULT -eq 0 ]]; then
+        echo "$T3_POINTS / $T3_POINTS: Successfully fetched IP for unglue'ed $T3_Q.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T3_POINTS));
+    else
+        echo "0 / $T3_POINTS: With unglue'ed $T3_Q, `format_test_fail_message $T3_RESULT`";
+    fi;
+fi;
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 4 ]]; then
+    T4_POINTS=1;
+    T4_Q="ds.v6ns.test-ipv6.com";
+    T4_EX_RS="216.218.228.119";
+    T4_NUM_QS=4;
+    T4_RESULT=`test_student_server $T4_Q $T4_EX_RS $T4_NUM_QS`;
+    if [[ $T4_RESULT -eq 0 ]]; then
+        echo "$T4_POINTS / $T4_POINTS: Successfully fetched IP against IPV6 only nameservers for $T4_Q.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T4_POINTS));
+    else
+        echo "0 / $T4_POINTS: With IPv6 nameserver only domain $T4_Q, `format_test_fail_message $T4_RESULT`";
+    fi;
+fi;
+
+echo "";
+echo "Caching Tests";
+echo "---";
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 5 ]]; then
+    T5_POINTS=10;
+    T5_Q="grc.com";
+    T5_EX_RS="4.79.142.200";
+    T5_STUDENT_PARTS=`start_student_cmd`;
+    T5_STUDENT_PID=`echo $T5_STUDENT_PARTS | awk -F: '{print $1}'`;
+    T5_STUDENT_PORT=`echo $T5_STUDENT_PARTS | awk -F: '{print $2}'`;
+    T5_STUDENT_FILE=`echo $T5_STUDENT_PARTS | awk -F: '{print $3}'`;
+
+    # This request should be uncached.
+    timeout $MAX_TIME dig @$HOST -p $T5_STUDENT_PORT $T5_Q > /dev/null 2> /dev/null;
+
+    # Now "zero out" the recording file
+    cat /dev/null > $T5_STUDENT_FILE;
+
+    # And now query again to see if there is any new network traffic generated
+    # (there shouldn't be...)
+    T5_STUDENT_OUTPUT=`timeout $MAX_TIME dig @$HOST -p $T5_STUDENT_PORT $T5_Q`;
+
+    # First check and see if we got the correct IP back on the second query.
+    # If not, doesn't matter how great the caching was.
+    T5_VERIFY_RS=`echo $T5_STUDENT_OUTPUT | grep $T5_EX_RS`;
+
+    if [[ -z $T5_VERIFY_RS ]]; then
+        echo "0 / $T5_POINTS: Caching failed since we did not get the correct response on second query for $T5_Q.";
+    else
+        # Next, we need to check that no additional network traffic was generated
+        T5_NUM_NEW_QUERIES=`check_queries_in_dump 0 $T5_STUDENT_FILE`;
+        if [[ $T5_NUM_NEW_QUERIES != 0 ]]; then
+            echo "0 / $T5_POINTS: Caching failed, additional DNS requests generated on second request to $T5_Q.";
+        else
+            echo "$T5_POINTS / $T5_POINTS: Successfully cached response for $T5_Q.";
+            EARNED_POINTS=$(($EARNED_POINTS + $T5_POINTS));
+        fi;
+    fi;
+
+    # Now clean up from question 5
+    kill_proc_tree $T5_STUDENT_PID;
+    rm $T5_STUDENT_FILE;
+fi;
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 6 ]]; then
+    T6_POINTS=2;
+    T6_Q_1="cs.uic.edu";
+    T6_Q_2="econ.uic.edu";
+    T6_EX_RS="131.193.206.16";
+    T6_STUDENT_PARTS=`start_student_cmd`;
+    T6_STUDENT_PID=`echo $T6_STUDENT_PARTS | awk -F: '{print $1}'`;
+    T6_STUDENT_PORT=`echo $T6_STUDENT_PARTS | awk -F: '{print $2}'`;
+    T6_STUDENT_FILE=`echo $T6_STUDENT_PARTS | awk -F: '{print $3}'`;
+
+    # This request should be uncached.
+    timeout $MAX_TIME dig @$HOST -p $T6_STUDENT_PORT $T6_Q_1 > /dev/null 2> /dev/null;
+    cat /dev/null > $T6_STUDENT_FILE;
+
+    T6_STUDENT_OUTPUT=`timeout $MAX_TIME dig @$HOST -p $T6_STUDENT_PORT $T6_Q_2`;
+    T6_VERIFY_OUTPUT=`echo $T6_STUDENT_OUTPUT | grep $T6_EX_RS`;
+
+    if [[ -z $T6_VERIFY_OUTPUT ]]; then
+        echo "0 / $T6_POINTS: Partial results caching failed, incorrect response on query for $T6_Q_2 proceeding query for $T6_Q_1.";
+    else
+        # Next, check and see if more than one query was generated (only one
+        # additional DNS request should be needed).
+        T6_NUM_NEW_QUERIES=`check_queries_in_dump 1 $T6_STUDENT_FILE`;
+        if [[ $T6_NUM_QUERIES != 1 ]]; then 
+            echo "0 / $T6_POINTS: Intermediate caching failed, observed more than 1 new query when requesting $T6_Q_2 proceeding query for $T6_Q_1.";
+        else
+            echo "$T6_POINTS / $T6_POINTS: Intermediate caching seems to be working!";
+            EARNED_POINTS=$(($EARNED_POINTS + $T6_POINTS));
+        fi;
+    fi;
+
+    # Now clean up from question 6
+    cleanup_student_cmd $T6_STUDENT_PARTS;
+fi;
+
+echo "";
+echo "Serving Multiple Requests";
+echo "---";
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 7 ]]; then
+    T7_POINTS=10;
+    T7_PREFIX="$RANDOM";
+    T7_QUERY="grc.com";
+    T7_IP="4.79.142.200";
+    T7_STUDENT_PARTS=`start_student_cmd`;
+    T7_STUDENT_PID=`echo $T7_STUDENT_PARTS | awk -F: '{print $1}'`;
+    T7_STUDENT_PORT=`echo $T7_STUDENT_PARTS | awk -F: '{print $2}'`;
+    T7_STUDENT_FILE=`echo $T7_STUDENT_PARTS | awk -F: '{print $3}'`;
+
+    T7_NUM_TESTS=10;
+
+    T7_OUTPUT=`for I in {1..10}; do timeout $MAX_TIME dig @$HOST -p $T7_STUDENT_PORT $T7_QUERY & done`;
+    sleep $MAX_TIME;
+
+    T7_SUCCESSES=`echo $T7_OUTPUT | grep -o $T7_IP`;
+    T7_NUM_SUCCESSES=`echo $T7_SUCCESSES | wc -w`;
+
+    if [[ $T7_NUM_SUCCESSES != $T7_NUM_TESTS ]]; then
+        echo "0 / $T7_POINTS: Only $T7_NUM_SUCCESSES queries to $T7_QUERY successfully completed in $MAX_TIME seconds.";
+    else
+        echo "$T7_POINTS / $T7_POINTS: All $T7_NUM_SUCCESSES requests to $T7_QUERY successfully completed in $MAX_TIME seconds.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T7_POINTS));
+    fi;
+fi;
+
+echo "";
+echo "Error Handling";
+echo "---";
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 8 ]]; then
+    T8_POINTS=5;
+    T8_OUTPUT_FILE="/tmp/hw4-$RANDOM-q8";
+    T8_STUDENT_PARTS=`start_student_cmd`;
+    T8_STUDENT_PID=`echo $T8_STUDENT_PARTS | awk -F: '{print $1}'`;
+    T8_STUDENT_PORT=`echo $T8_STUDENT_PARTS | awk -F: '{print $2}'`;
+    T8_STUDENT_FILE=`echo $T8_STUDENT_PARTS | awk -F: '{print $3}'`;
+    T8_Q="cs.uic.edu";
+    T8_IP="131.193.32.29";
+
+    # Block all outgoing DNS requests
+    sudo iptables -I OUTPUT -p udp --destination-port 53 -j DROP;
+
+    # Now start a request to the student server.  It should hang and timeout
+    timeout $MAX_TIME dig @$HOST -p $T8_STUDENT_PORT $T8_Q > $T8_OUTPUT_FILE 2> /dev/null &
+    T8_REQUEST_PID=$!;
+    sleep 1;
+
+    # Re-enable outgoing DNS requests
+    sudo iptables -D OUTPUT -p udp --destination-port 53 -j DROP;
+    sleep 3;
+
+    # And now see if the resolver successfully completed the request after 
+    # timing out.
+    kill_proc_tree $T8_REQUEST_PID;
+    T8_TEST_RESULT=`cat $T8_OUTPUT_FILE | grep $T8_IP`;
+    if [[ -z $T8_TEST_RESULT ]]; then
+        echo "0 / $T8_POINTS: Request to $T8_Q was not successfully retried after first imposed failure.";
+    else
+        echo "$T8_POINTS / $T8_POINTS: Request to $T8_Q successfully completed / retried after initial request was blocked.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T8_POINTS));
+    fi;
+
+    # Clean up all the misc things created during the test
+    cleanup_student_cmd $T8_STUDENT_PARTS;
+    rm $T8_OUTPUT_FILE;
+fi;
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 9 ]]; then
+    T9_POINTS=2;
+    T9_Q="fsf.org";
+    T9_IP="208.118.235.131";
+    mv $ORIG_ROOT_SERVERS_FILE $BACKUP_ROOT_SERVERS_FILE; 
+    cp $GRADE_SCRIPT_DIR/t9-root-servers.txt $ORIG_ROOT_SERVERS_FILE;
+
+    T9_STUDENT_PARTS=`start_student_cmd`;
+    T9_STUDENT_PID=`echo $T9_STUDENT_PARTS | awk -F: '{print $1}'`;
+    T9_STUDENT_PORT=`echo $T9_STUDENT_PARTS | awk -F: '{print $2}'`;
+    T9_STUDENT_FILE=`echo $T9_STUDENT_PARTS | awk -F: '{print $3}'`;
+
+    T9_STUDENT_OUTPUT=`timeout 6 dig @$HOST -p $T9_STUDENT_PORT $T9_Q`;
+    T9_TEST_RESULT=`echo $T9_STUDENT_OUTPUT | grep $T9_IP`;
+    if [[ -z $T9_TEST_RESULT ]]; then
+        echo "0 / $T9_POINTS: Student server did not successfully retry other servers after given a bad root server.";
+    else
+        echo "$T9_POINTS / $T9_POINTS: Student server successfully retried a second server after being given a bad root server.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T9_POINTS));
+    fi;
+
+    mv $BACKUP_ROOT_SERVERS_FILE $ORIG_ROOT_SERVERS_FILE;
+    cleanup_student_cmd $T9_STUDENT_PARTS;
+fi;
+
+
+if [[ -z $SINGLE_TEST ]] || [[ $SINGLE_TEST == 10 ]]; then
+    T10_POINTS=1;
+    T10_Q="noscript.net";
+    mv $ORIG_ROOT_SERVERS_FILE $BACKUP_ROOT_SERVERS_FILE; 
+    cp $GRADE_SCRIPT_DIR/t10-root-servers.txt $ORIG_ROOT_SERVERS_FILE;
+
+
+    T10_STUDENT_PARTS=`start_student_cmd`;
+    T10_STUDENT_PORT=`echo $T10_STUDENT_PARTS | awk -F: '{print $2}'`;
+
+    T10_STUDENT_OUTPUT=`timeout 10 dig @$HOST -p $T10_STUDENT_PORT $T10_Q`;
+    T10_STUDENT_RESULT=`echo $T10_STUDENT_OUTPUT | grep SERVFAIL`;
+
+    if [[ -z $T10_STUDENT_RESULT ]]; then
+        echo "0 / $T10_POINTS: Student server did not return 'SERVFAIL' when querying $T10_Q against a given set of invalid root servers.";
+    else
+        echo "$T10_POINTS / $T10_POINTS: Student server returned 'SERVFAIL' when querying $T10_Q against a set of invalid root servers.";
+        EARNED_POINTS=$(($EARNED_POINTS + $T10_POINTS));
+    fi;
+    mv $BACKUP_ROOT_SERVERS_FILE $ORIG_ROOT_SERVERS_FILE;
+    cleanup_student_cmd $T10_STUDENT_PARTS;
+fi;
+
+echo "";
+echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
