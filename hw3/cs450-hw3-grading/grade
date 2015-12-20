@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+# All grading scripts assume that we get one argument, and that that
+# argument is a path to a directory with code we should check.  If we
+# don't get an argument, or the argument isn't a path, we can error
+# out quick.
+
+if [[ -z $1 ]]; then
+  printf "Expecting one argument, a path containing code to run and " 1>&2
+  printf "grade.\n" 1>&2
+  exit 1;
+fi;
+
+if [[ ! -d $1 ]]; then
+    mkdir $1;
+fi;
+
+GRADE_SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+source $GRADE_SCRIPT_DIR/helpers;
+EXEC_FILE="server.sh";
+EARNED_POINTS=0;
+POSSIBLE_POINTS=15;
+HOST="127.0.0.1";
+
+# Maximum number of seconds we'll wait for a student program to complete
+# when we expect things to be working correctly.
+WAIT_TIME=1;
+
+
+cd $1;
+
+# If there is a make file in the current directory, try and clear things
+# out, and then make things again.
+if [ -f 'Makefile' ] || [ -f 'makefile' ] ; then
+  make clean > /dev/null;
+  make > /dev/null;
+  make all > /dev/null;
+fi;
+
+
+echo "Basic Tests";
+echo "---";
+
+# For the first point, we just need to see if there is a test running program
+# an that it is executable.  If not, than we can stop and not go any further.
+if [[ ! -x $EXEC_FILE ]]; then
+  echo "0 / 1: $EXEC_FILE either does not exist or is not executable.";
+  echo "---";
+  echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+  exit 0;
+fi;
+
+TEST_1_POINTS=1;
+TEST_1_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_1_PORT 2> /dev/null > /dev/null &
+TEST_1_SERVER_PID=$!;
+sleep $WAIT_TIME;
+PROG_ON_PORT=`is_port_used $TEST_1_PORT`;
+if [[ `is_port_used $TEST_1_PORT` ]]; then
+  echo "1 / $TEST_1_POINTS: $EXEC_FILE resulted in a program listening on that port.";
+  EARNED_POINTS=$(($EARNED_POINTS + $TEST_1_POINTS));
+else
+  echo "0 / $TEST_1_POINTS: $EXEC_FILE did not result in a program listening that port.";
+fi;
+kill_proc_tree $TEST_1_SERVER_PID;
+
+
+echo "";
+echo "Standard Clients Tests";
+echo "---";
+STD_CLIENT_TEST_POINTS=3;
+
+TEST_2_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_2_PORT 2> /dev/null > /dev/null &
+TEST_2_SERVER_PID=$!;
+sleep $WAIT_TIME;
+$GRADE_SCRIPT_DIR/run_clients.py --games 1 --port $TEST_2_PORT --host $HOST --secs 3 > /dev/null 2> /dev/null;
+if [[ $? -eq 0 ]]; then
+    echo "$STD_CLIENT_TEST_POINTS / $STD_CLIENT_TEST_POINTS: Two TA clients successfully completed a game with the server in under 3 seconds.";
+    EARNED_POINTS=$((EARNED_POINTS + $STD_CLIENT_TEST_POINTS));
+else
+    echo "0 / $STD_CLIENT_TEST_POINTS: Two TA clients were not able to successfully complete a game with the server in under 3 seconds.";
+fi;
+kill_proc_tree $TEST_2_SERVER_PID;
+
+
+TEST_3_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_3_PORT 2> /dev/null > /dev/null &
+TEST_3_SERVER_PID=$!;
+sleep $WAIT_TIME;
+$GRADE_SCRIPT_DIR/run_clients.py --games 5 --port $TEST_3_PORT --host $HOST --secs 3 > /dev/null 2> /dev/null;
+if [[ $? -eq 0 ]]; then
+    echo "$STD_CLIENT_TEST_POINTS / $STD_CLIENT_TEST_POINTS: 10 TA clients successfully completed 5 games with the server in under 3 seconds.";
+    EARNED_POINTS=$((EARNED_POINTS + $STD_CLIENT_TEST_POINTS));
+else
+    echo "0 / $STD_CLIENT_TEST_POINTS: 10 TA clients were not able to successfully complete 5 games with the server in under 3 seconds.";
+fi;
+kill_proc_tree $TEST_3_SERVER_PID;
+
+
+echo "";
+echo "Slow Clients Tests";
+echo "---";
+SLOW_TEST_POINTS=4;
+
+TEST_4_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_4_PORT 2> /dev/null > /dev/null &
+TEST_4_SERVER_PID=$!;
+sleep $WAIT_TIME;
+$GRADE_SCRIPT_DIR/run_clients.py --games 5 --port $TEST_4_PORT --host $HOST --secs 10 --sleepy > /dev/null 2> /dev/null;
+if [[ $? -eq 0 ]]; then
+    echo "$SLOW_TEST_POINTS / $SLOW_TEST_POINTS: Successfully completed 5 games with the server in under 10 seconds, with half of the clients halting for 5 sec.";
+    EARNED_POINTS=$((EARNED_POINTS + $SLOW_TEST_POINTS));
+else
+    echo "0 / $SLOW_TEST_POINTS: 5 games were not completed in under 10 seconds, with half of the clients pausing for 5 seconds mid protocol.";
+fi;
+kill_proc_tree $TEST_4_SERVER_PID;
+
+
+TEST_5_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_5_PORT 2> /dev/null > /dev/null &
+TEST_5_SERVER_PID=$!;
+sleep $WAIT_TIME;
+$GRADE_SCRIPT_DIR/run_clients.py --games 100 --port $TEST_5_PORT --host $HOST --secs 10 --sleepy > /dev/null 2> /dev/null;
+if [[ $? -eq 0 ]]; then
+    echo "$SLOW_TEST_POINTS / $SLOW_TEST_POINTS: Successfully completed 100 games with the server in under 10 seconds, with half of the clients halting for 5 sec.";
+    EARNED_POINTS=$((EARNED_POINTS + $SLOW_TEST_POINTS));
+else
+    echo "0 / $SLOW_TEST_POINTS: 100 games were not completed in under 10 seconds, with half of the clients pausing for 5 seconds mid protocol.";
+fi;
+kill_proc_tree $TEST_5_SERVER_PID;
+
+
+echo "";
+echo "Bonus Tests";
+echo "---";
+BONUS_TEST_POINTS=1;
+
+TEST_6_PORT=`rand_high_port`;
+./$EXEC_FILE $TEST_6_PORT 2> /dev/null > /dev/null &
+TEST_6_SERVER_PID=$!;
+sleep $WAIT_TIME;
+$GRADE_SCRIPT_DIR/run_clients.py --games 100 --port $TEST_6_PORT --host $HOST --secs 5 > /dev/null 2> /dev/null;
+TEST_6_FIRST_CODE=$?;
+$GRADE_SCRIPT_DIR/run_clients.py --games 1 --port $TEST_6_PORT --host $HOST > /dev/null 2> /dev/null;
+TEST_6_SECOND_CODE=$?;
+
+if [[ $TEST_6_FIRST_CODE -eq 0 ]] && [[ $TEST_6_SECOND_CODE -eq 0 ]]; then
+    echo "$BONUS_TEST_POINTS / $BONUS_TEST_POINTS: Successfully completed 101 without needing to restart the server.";
+    EARNED_POINTS=$((EARNED_POINTS + $BONUS_TEST_POINTS));
+else
+    echo "0 / $BONUS_TEST_POINTS: Unable to successfully complete 101 games without restarting the server.";
+fi;
+kill_proc_tree $TEST_6_SERVER_PID;
+
+
+echo "";
+echo "total: $EARNED_POINTS / $POSSIBLE_POINTS";
+exit 0 > /dev/null 2> /dev/null;
