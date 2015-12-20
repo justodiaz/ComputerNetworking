@@ -30,7 +30,7 @@ void copy_str_ptr(const char *from, char *to, const char *end, int limit){
  	*to = '\0';
 }
 
-//Custom UIR parser
+//Custom URI parser
 void uri_parser_buffer(char *uri, char *protocol, int l1, char *host, int l2, char *path, int l3, char *file, int l4){
 	char *p1, *p2, *p3, *t_p3, *p4;
 
