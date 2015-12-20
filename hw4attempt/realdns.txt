@@ -1,0 +1,18 @@
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> www.google.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 37854
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;www.google.com.			IN	A
+
+;; ANSWER SECTION:
+www.google.com.		30	IN	A	216.58.216.228
+
+;; Query time: 39 msec
+;; SERVER: 2001:4978:292:2::1#53(2001:4978:292:2::1)
+;; WHEN: Sun Oct 04 23:33:43 CDT 2015
+;; MSG SIZE  rcvd: 48
+

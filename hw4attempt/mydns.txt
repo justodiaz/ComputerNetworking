@@ -1,0 +1,25 @@
+
+; <<>> DiG 9.9.5-3ubuntu0.5-Ubuntu <<>> @localhost -p 5454 www.google.com
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 45710
+;; flags: qr aa rd; QUERY: 1, ANSWER: 6, AUTHORITY: 0, ADDITIONAL: 0
+;; WARNING: recursion requested but not available
+
+;; QUESTION SECTION:
+;www.google.com.			IN	A
+
+;; ANSWER SECTION:
+www.google.com.		300	IN	A	64.233.171.99
+www.google.com.		300	IN	A	64.233.171.103
+www.google.com.		300	IN	A	64.233.171.147
+www.google.com.		300	IN	A	64.233.171.106
+www.google.com.		300	IN	A	64.233.171.105
+www.google.com.		300	IN	A	64.233.171.104
+
+;; Query time: 200 msec
+;; SERVER: 127.0.0.1#5454(127.0.0.1)
+;; WHEN: Sun Oct 04 23:34:06 CDT 2015
+;; MSG SIZE  rcvd: 128
+
