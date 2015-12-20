@@ -1,0 +1,224 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import re
+import dateutil.parser
+import subprocess
+
+
+possible_points = 13
+human_labels = ["first", "second", "third", "fourth", "fifth"]
+
+
+try:
+    grade_dir = sys.argv[1]
+except IndexError:
+    print "Usage: ./grade <path to homework dir>"
+    sys.exit(1)
+
+hw5 = os.path.realpath(os.path.join(grade_dir, "hw5.txt"))
+pcap_file = os.path.realpath(os.path.join(grade_dir, "hw5.pcap"))
+
+try:
+    handle = open(hw5, 'r')
+except IOError:
+    print "Homework file, 'hw5.txt', does not exist."
+    print ""
+    print "total: 0 / {}".format(possible_points)
+    sys.exit(0)
+
+
+
+# Strip the Q# prefix to the line, and lower case everything to make
+# comparisons easier
+def normalize_line(a_line):
+    lower_line = a_line.lower().strip()
+    return re.sub(r'q\d+\s?:\s?', '', lower_line)
+
+
+def q1(a_line):
+    seq_num = "951057939"
+    if seq_num not in a_line:
+        return 0, "Did not find correct absolute sequence number {}.".format(seq_num)
+    return 1, "Found correct sequence number, {}.".format(seq_num)
+
+
+def q2(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    if len(parts) != 2:
+        return 0, "Incorrect format for response, should be AAAA;CNAME."
+    if parts[0] != "aaaa":
+        return 0, "Incorrect answer for first query type, should be AAAA"
+    if parts[1] != "cname":
+        return 0, "Incorrect answer for second query type, should be CNAME"
+    return 1, "Both query types are correct: AAAA,CNAME"
+
+
+def q3(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    filename = "funny-pictures-kitten-says-hello.jpg"
+    file_hash = "bb2c48239e785e892915e72907eb97af"
+    if len(parts) != 2:
+        return 0, "Incorrect format for answer, should be {};{}".format(filename, file_hash)
+    if parts[0] != filename:
+        return 0, "Incorrect answer for name of downloaded file, should be {}.".format(filename)
+    if parts[1] != file_hash:
+        return 0, "Incorrect answer for hash of downloaded file, should be {}.".format(file_hash)
+    return 1, "Both filename and content hash are correct"
+
+
+def q4(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    client_ip = "192.168.0.2"
+    server_ip = "192.168.0.1"
+    if len(parts) != 2:
+        return 0, "Incorrect format for answer, should be {};{}.".format(client_ip, server_ip)
+    if parts[0].find(client_ip) == -1:
+        return 0, "Incorrect IP for client, should be {}.".format(client_ip)
+    if parts[1].find(server_ip) == -1:
+        return 0, "Incorrect IP for server, should be {}.".format(server_ip)
+    return 1, "Correct IPs for both client and server."
+
+
+def q5(a_line):
+    correct_password = "user"
+    if a_line != correct_password:
+        return 0, "Incorrect telnet password, should be {}.".format(correct_password)
+    return 1, "Correct password given for telnet login."
+
+
+def q6(a_line):
+    correct_date = "Sat Nov 27 20:11:43"
+    correct_date_obj = dateutil.parser.parse(correct_date)
+    try:
+        given_date_obj = dateutil.parser.parse(a_line)
+    except ValueError:
+        return 0, "Can't parse or understand the given date for the last login time."
+    if given_date_obj != correct_date_obj:
+        return 0, "Given login date is not equivalent to the correct time, {}.".format(correct_date)
+    return 1, "Correct time given for last telnet login."
+
+
+def q7(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    correct_commands = ["/sbin/ping www.yahoo.com", "ls", "ls -a", "exit"]
+    commands_and_labels = zip(correct_commands, human_labels)
+
+    if len(parts) != len(correct_commands):
+        return 0, "Incorrect number of commands given for answer, should be: {}.".format("; ".join(correct_commands))
+    for index, (a_cmd, a_label) in enumerate(commands_and_labels):
+        if parts[index] != a_cmd:
+            return 0, "Incorrect answer for the {} command in answer, complete correct answer is {}.".format(a_label, "; ".join(correct_commands))
+    return 1, "All four commands given over telnet are listed."
+
+
+def q8(a_line):
+    username = "edmond"
+    if a_line != username:
+        return 0, "Incorrect username given, should be {}.".format(username)
+    return 1, "Correct username given."
+
+
+def q9(a_line):
+    hostname = "cs.uic.edu"
+    if a_line != hostname:
+        return 0, "Incorrect host given, should be {}.".format(hostname)
+    return 1, "Correct hostname given."
+
+
+def q10(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    correct_commands = ["ls", "echo Networking is supper supper interested!", "ping cs.uic.edu", "echo Bye!", "exit"]
+    cmds_labels = zip(correct_commands, human_labels)
+
+    if len(parts) != len(correct_commands):
+        return 0, "Incorrect number of commands given for answer, complete correct answer is {}.".format("; ".join(correct_commands))
+
+    for index, (a_cmd, a_label) in enumerate(cmds_labels):
+        if parts[index] != a_cmd.lower():
+            return 0, "Incorrect answer for the {} command in answer, complete correct answer is {}.".format(a_label, "; ".join(correct_commands))
+    return 1, "All five commands given are listed."
+
+
+def q11(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    ip = "131.193.34.202"
+    port = "100"
+    md5_hash = "ec26434293bd9928f187bf00cb72b2af"
+
+    if len(parts) != 3:
+        return 0, "Incorrect format for answer, should be {};{};{}.".format(ip, port, md5_hash)
+    if parts[0] != ip:
+        return 0, "Incorrect answer for source IP, should be {}.".format(ip)
+    if parts[1] != port:
+        return 0, "Incorrect answer for source port, should be {}.".format(port)
+    if parts[2] != md5_hash:
+        return 0, "Incorrect md5 hash given, should be {}.".format(md5_hash)
+    return 1, "Correct IP, port and hash given."
+
+
+def q12(a_line):
+    parts = [p.strip() for p in a_line.split(";")]
+    filename = "awesome.pdf"
+    md5_hash = "8500a17774520445a76bb9d79c12f4fc"
+
+    if len(parts) != 2:
+        return 0, "Incorrect format for answer, should be {};{}.".format(filename, md5_hash)
+    if parts[0] != filename:
+        return 0, "Incorrect filename given, should be {}.".format(filename)
+    if parts[1] != md5_hash:
+        return 0, "Incorrect md5 hash given, should be {}.".format(md5_hash)
+    return 1, "Correct filename and md5 hash given."
+
+
+# Check and see if the given pcap file matches the BARE MINIMUM of looking
+# like a git clone request
+def q13(pcap_path):
+    if not os.path.isfile(pcap_path):
+        return 0, "pcap file {} does not exist.".format(pcap_path)
+    cmd = ['tcpdump', '-r', pcap_path, 'dst host git.uicbits.net']
+    pretty_cmds = list(cmd)
+    pretty_cmds[2] = 'hw5.pcap'
+
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    output, err = p.communicate()
+    returncode = p.wait()
+    if returncode != 0:
+        return 0, "Running command '{}' error, file is likely malformed.".format(" ".join(pretty_cmds))
+
+    # Since everything is tunneled through SSH, we can't (easily) see the
+    # contents.  So instead we just check if there is a moderate amount
+    # of content in the pcap file to see if it looks reasonable
+    tcpdump_stdout = output.split("\n")
+    if len(tcpdump_stdout) < 10:
+        return 0, "Number of matching packets in pcap file is too low to be a correct git clone. (cmd: {}).".format(" ".join(pretty_cmds))
+    return 1, "The pcap file looks like it could be a correct git clone request."
+    
+
+# Collect references to the first 12 grading functions, that are all graded
+# against the given homework file.  This intentionally does not include
+# the q13 function, which is handled afterwards, below.
+grading_funcs = [globals()["q{}".format(i)] for i in range(1, 13)]
+responses = []
+for line in handle:
+    if len(responses) == 12:
+        break
+    if len(responses) == 0 and line.find("Q1") != 0:
+        continue
+    responses.append(normalize_line(line))
+
+
+answers_and_funcs = zip(responses, grading_funcs)
+grades_and_answers = [f(a) for a, f in answers_and_funcs]
+grades_and_answers = [(s, "{} / 1: Q{}: {}".format(s, i + 1, a)) for i, (s, a) in enumerate(grades_and_answers)]
+scores, texts = zip(*grades_and_answers)
+total_score = sum(scores)
+print "\n".join(texts)
+
+q13_score, q13_text = q13(pcap_file)
+print "{} / 1: Q13: {}".format(q13_score, q13_text)
+total_score += q13_score
+
+print ""
+print "total: {} / {}".format(total_score, possible_points)
